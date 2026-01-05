@@ -139,7 +139,7 @@ function activate(context) {
     const config = vscode.workspace.getConfiguration('rPlotViewer');
     const autoAttach = config.get('autoAttach', true);
     if (autoAttach) {
-        const setupCmd = `source(Sys.getenv('VSC_R_PLOT_INIT'))`;
+        const setupCmd = `source('${normalizedInitPath}')`;
         const injectedTerminals = new Set();
         const tryInject = (terminal) => {
             if (injectedTerminals.has(terminal))

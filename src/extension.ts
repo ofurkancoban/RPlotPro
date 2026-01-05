@@ -165,7 +165,7 @@ export function activate(context: vscode.ExtensionContext) {
     const autoAttach = config.get('autoAttach', true);
 
     if (autoAttach) {
-        const setupCmd = `source(Sys.getenv('VSC_R_PLOT_INIT'))`;
+        const setupCmd = `source('${normalizedInitPath}')`;
         const injectedTerminals = new Set<vscode.Terminal>();
 
         const tryInject = (terminal: vscode.Terminal) => {

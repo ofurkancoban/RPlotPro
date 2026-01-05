@@ -17,10 +17,14 @@ local(
         if (!require("base64enc", quietly = TRUE)) {
             install.packages("base64enc")
         }
+        if (!require("svglite", quietly = TRUE)) {
+            install.packages("svglite")
+        }
 
         library(httpuv)
         library(jsonlite)
         library(base64enc)
+        library(svglite)
 
         # State variables (now local to this block)
         clients <- list()
@@ -73,7 +77,7 @@ local(
                     width_in <- width / 96
                     height_in <- height / 96
                     temp_file <- tempfile(fileext = ".svg")
-                    svg(
+                    svglite::svglite(
                         filename = temp_file,
                         width = width_in,
                         height = height_in,
@@ -237,7 +241,7 @@ local(
                 height_in <- max(height_px / 96, 2)
 
                 temp_file <- tempfile(fileext = ".svg")
-                svg(
+                svglite::svglite(
                     filename = temp_file,
                     width = width_in,
                     height = height_in,
@@ -338,7 +342,7 @@ local(
         }
 
         vscode_bg_device <- function(...) {
-            svg(
+            svglite::svglite(
                 filename = tempfile(),
                 width = 10,
                 height = 6,

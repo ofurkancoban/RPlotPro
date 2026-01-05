@@ -1,3 +1,7 @@
 task.md
 .DS_Store
+.gitignore
 r-plot-pro-0.0.1.vsix
+r-plot-pro-0.0.2.vsix
+r-plot-pro-0.0.3.vsix
+r-plot-pro-0.0.4.vsix
