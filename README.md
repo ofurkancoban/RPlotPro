@@ -67,6 +67,13 @@ View your R plots **instantly** as they're generated in the terminal. No manual 
 - **Smooth animations** and transitions
 - **Modern design** with glassmorphism effects
 - **Responsive** interface
+- **Split View** support with independent controls
+
+### ✍️ **Annotations**
+- **Draw** on plots with freehand tools
+- **Highlight** important data points
+- **Values preserved** when exporting or copying
+- **Undo/Redo** support for annotations
 
 ---
 
@@ -206,6 +213,22 @@ This extension works out of the box with no configuration needed. Advanced users
 ---
 
 ## 🔄 Release Notes
+
+### 0.0.52 - Split View & UI Refinements
+
+**New Features:**
+- **Enhanced Split View:**
+  - **Side-by-Side Export:** Saving or copying in split mode now captures both plots combined.
+  - **Real-time Resizing:** Draggable splitter with smooth plot resizing.
+  - **Improved Labels:** Plot indicators remain visible during interaction.
+  - **Annotations:** Draw and highlight directly on plots before exporting.
+- **UI Refinements:**
+  - **Dark Mode:** Now uses pure black (`#000000`) for seamless integration with inverted plots.
+  - **Sidebar:** Thumbnails panel opens by default for instant access.
+  - **Startup:** Extension defaults to Light Mode for better initial visibility.
+- **Performance:**
+  - Optimized resize events and memory usage.
+  - Fixed "No Plot" screen transitions.
 
 ### 0.0.1 - Initial Release
 
