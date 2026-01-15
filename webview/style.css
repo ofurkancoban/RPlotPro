@@ -1,0 +1,895 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+    --bg-primary: var(--vscode-editor-background);
+    --bg-secondary: var(--vscode-sideBar-background);
+    --bg-tertiary: var(--vscode-sideBarSectionHeader-background);
+    --text-primary: var(--vscode-editor-foreground);
+    --text-secondary: var(--vscode-descriptionForeground);
+    --border-color: var(--vscode-panel-border);
+    --accent: var(--vscode-focusBorder);
+    --button-bg: var(--vscode-button-background);
+    --button-hover: var(--vscode-button-hoverBackground);
+    --list-hover: var(--vscode-list-hoverBackground);
+    --list-active: var(--vscode-list-activeSelectionBackground);
+    --list-active-fg: var(--vscode-list-activeSelectionForeground);
+    --toolbar-hover: var(--vscode-toolbar-hoverBackground);
+}
+
+body {
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    opacity: 0;
+    transition: opacity 0.15s ease-in;
+}
+
+/* Top Header / Toolbar */
+.header {
+    background: var(--bg-secondary); 
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    height: 36px;
+}
+
+.title-area {
+    display: none; /* Removed for more toolbar space */
+}
+
+.toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+}
+
+.connection-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-left: 8px;
+    padding-left: 8px;
+    border-left: 1px solid var(--border-color);
+}
+
+.status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--vscode-debugIcon-stopForeground, #f48771);
+}
+.status-dot.connected {
+    background: var(--vscode-debugIcon-startForeground, #89d185);
+}
+
+/* Icon Buttons */
+button.icon-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+button.icon-btn:hover:not(:disabled) {
+    background: var(--toolbar-hover);
+}
+
+button.icon-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+button.icon-btn svg {
+    width: 20px;
+    height: 20px;
+    stroke: currentColor;
+    transition: transform 0.2s ease;
+}
+
+button.icon-btn svg[fill="none"] {
+    fill: none;
+}
+
+button.icon-btn svg[fill="currentColor"] {
+    fill: currentColor;
+    stroke: none;
+}
+
+/* Rotate sidebar toggle icon when in vertical layout */
+.layout-vertical #sidebarToggle svg {
+    transform: rotate(90deg);
+}
+
+.separator {
+    width: 1px;
+    height: 16px;
+    background: var(--border-color);
+    margin: 0 4px;
+}
+
+/* Responsive Layout Logic */
+/* Default: Sidebar on Right (Row) */
+.main-layout {
+    display: flex;
+    flex-direction: row;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+}
+
+.sidebar-hidden {
+    display: none !important;
+}
+
+/* Sidebar: Right side by default */
+.sidebar {
+    overflow: hidden;
+    width: 130px;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    /* Sidebar second naturally */
+}
+
+.plot-viewer {
+     /* Plot first naturally */
+     flex: 1;
+}
+
+.plot-list {
+    flex: 1;
+    overflow-y: auto;
+    overflow-y: overlay;
+    overflow-x: hidden;
+    padding: 0;
+    display: flex;
+    flex-direction: column; 
+    align-items: center; /* Center items horizontally */
+    /* gap: 4px; */
+}
+
+/* Vertical Layout Mod (Narrow/Square) applied via JS class */
+.layout-vertical .main-layout {
+    flex-direction: column;
+}
+
+.layout-vertical .plot-viewer {
+    flex: 1;
+    height: auto; /* let flex handle it */
+    min-height: 0;
+}
+
+.layout-vertical .sidebar {
+    width: 100% !important;
+    height: 105px; /* Fixed height for bottom bar - tight fit */
+    border-left: none;
+    border-top: 1px solid var(--border-color);
+    flex-direction: row; /* Horizontal list */
+}
+
+/* Fix for vertical layout (bottom bar) */
+.layout-vertical .plot-item {
+    width: auto;
+    border-bottom: none;
+    border-right: 1px solid var(--border-color);
+    margin-bottom: 0;
+    /* margin-right: 6px; */
+}
+
+.layout-vertical .plot-item.active {
+    border-left: none;
+    box-shadow: none;
+    border-top: 2px solid var(--accent);
+}
+
+.layout-vertical .plot-list {
+    flex-direction: row;
+    overflow-y: hidden;
+    overflow-x: auto;
+    scrollbar-width: none; /* Firefox */
+}
+
+.layout-vertical .plot-list::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, Edge */
+}
+
+.layout-vertical .sidebar-header {
+     /* Hide header or make strictly vertical/small in bottom mode? 
+        User didn't specify, but standard is usually just list. 
+        Let's keep it simply or hide it to save space. 
+     */
+     display: none; 
+}
+
+.plot-item {
+    position: relative;
+    width: 100%;
+    padding: 2px 6px 6px 6px;
+    border-bottom: 1px solid var(--border-color);
+    cursor: pointer;
+    opacity: 0.8;
+    transition: all 0.1s;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center; /* Center content within item */
+}
+
+.layout-vertical .plot-item {
+    border-bottom: none;
+    border-right: 1px solid var(--border-color);
+}
+
+.plot-item:hover {
+    background: var(--list-hover);
+    opacity: 1;
+}
+
+.plot-item.active {
+    background: var(--list-active);
+    color: var(--list-active-fg);
+    opacity: 1;
+    box-shadow: inset 2px 0px 0 0 var(--accent);
+}
+
+.layout-vertical .plot-item.active {
+    border-left: none;
+    border-top: 3px solid var(--accent);
+}
+
+.plot-item img {
+    width: 115px;
+    height: 75px;
+    object-fit: contain;
+    border: 1px solid var(--border-color);
+    margin-bottom: 4px;
+    display: block;
+    border-radius: 3px;
+}
+
+/* Thumbnail footer with two columns */
+.thumbnail-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    margin-top: 4px;
+    padding: 0 4px;
+}
+
+/* Adjust footer position in bottom panel */
+.layout-vertical .thumbnail-footer {
+    margin-top: -4px;
+}
+
+.plot-meta {
+    font-size: 9px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    opacity: 0.8;
+    gap: 2px;
+}
+
+/* Thumbnail Action Icons Container */
+.thumbnail-actions {
+    display: flex;
+    flex-direction: row;
+    gap: 4px;
+}
+
+/* Delete Button (Thumbnails) */
+.delete-btn {
+    width: 18px;
+    height: 18px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+.delete-btn svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+    stroke: none !important;
+}
+
+.plot-item:hover .delete-btn {
+    opacity: 1;
+    color: var(--vscode-errorForeground);
+}
+
+/* Favorite Star Icon */
+.favorite-btn {
+    width: 18px;
+    height: 18px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+.favorite-btn svg {
+    width: 100%;
+    height: 100%;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    transition: all 0.2s;
+}
+
+.favorite-btn.active {
+    opacity: 1 !important;
+    color: #FFD700;
+}
+
+.favorite-btn.active svg {
+    fill: #FFD700;
+    stroke: #FFD700;
+}
+
+.plot-item:hover .favorite-btn {
+    opacity: 1;
+}
+
+/* Note Icon */
+.note-btn {
+    width: 18px;
+    height: 18px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+.note-btn svg {
+    width: 100%;
+    height: 100%;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+}
+
+.note-btn.has-note {
+    opacity: 1 !important;
+    color: var(--vscode-charts-blue);
+}
+
+.note-btn.has-note svg {
+    fill: none;
+}
+
+.plot-item:hover .note-btn {
+    opacity: 1;
+}
+
+/* Modal Dialog for Notes */
+.modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-overlay.show {
+    display: flex;
+}
+
+.modal-content {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 20px;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text-primary);
+}
+
+.modal-textarea {
+    width: 100%;
+    min-height: 100px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    padding: 8px;
+    font-family: var(--vscode-font-family);
+    font-size: 12px;
+    resize: vertical;
+    margin-bottom: 12px;
+}
+
+.modal-input {
+    width: 100%;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    padding: 8px;
+    font-family: var(--vscode-font-family);
+    font-size: 14px;
+    margin-bottom: 12px;
+}
+
+.modal-input:focus {
+    outline: 1px solid var(--accent);
+}
+
+.modal-textarea:focus {
+    outline: 1px solid var(--accent);
+}
+
+.modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.modal-btn {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.2s;
+}
+
+.modal-btn-primary {
+    background: var(--button-bg);
+    color: var(--vscode-button-foreground);
+}
+
+.modal-btn-primary:hover {
+    background: var(--button-hover);
+}
+
+.modal-btn-secondary {
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.modal-btn-secondary:hover {
+    background: var(--list-hover);
+}
+
+/* Drag visual feedback */
+.plot-item.dragging {
+    opacity: 0.5;
+}
+
+
+/* Right: Main Plot Area */
+.plot-viewer {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg-primary);
+    position: relative;
+}
+
+.plot-container {
+    flex: 1;
+    display: flex;
+    align-items: flex-start; /* Do not center, let margin:auto handle it */
+    justify-content: flex-start;
+    overflow: auto !important; /* Allow native scrolling */
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+    padding: 0; 
+    background: var(--bg-primary);
+    cursor: grab;
+    position: relative;
+}
+
+.plot-container::-webkit-scrollbar {
+    display: none; /* Chrome/Safari/Webkit */
+}
+
+.plot-container.dragging {
+    cursor: grabbing;
+    user-select: none;
+}
+
+/* Zoom level notification */
+.zoom-notification {
+    position: absolute;
+    top: 60px; /* Below toolbar */
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 500;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    z-index: 1000;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(4px);
+}
+
+.zoom-notification.show {
+    opacity: 1;
+}
+
+.media-wrapper {
+    position: relative;
+    display: inline-block;
+    /* margin handled by JS dynamically */
+    flex-shrink: 0;
+    transition: transform 0.3s ease, width 0.3s ease, height 0.3s ease;
+    transform-origin: center center;
+    overflow: hidden;
+}
+
+.media-wrapper img, .media-wrapper .annotation-layer {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+.media-wrapper img {
+    /* object-fit handled by JS calculations and .has-aspect class */
+    transition: filter 0.3s ease;
+    z-index: 1;
+}
+
+.media-wrapper .annotation-layer {
+    z-index: 2;
+    pointer-events: none;
+}
+
+body.is-annotating .media-wrapper .annotation-layer {
+    pointer-events: auto;
+}
+
+.dark-mode img {
+    filter: invert(1);
+}
+
+/* Zoom and Aspect marker classes (logic moved to JS) */
+.media-wrapper.has-aspect img {
+    object-fit: fill !important;
+}
+
+.media-wrapper.aspect-fill img {
+    object-fit: cover !important;
+}
+
+/* Base image state when no aspect is set */
+.media-wrapper:not(.has-aspect):not(.aspect-fill) img {
+    object-fit: contain;
+}
+
+.empty-state {
+    text-align: center;
+    color: var(--text-secondary);
+    opacity: 0.7;
+}
+
+.empty-state .icon { 
+    font-size: 32px; 
+    margin-bottom: 10px; 
+    opacity: 0.5; 
+}
+
+/* Animated Background Styles */
+.animated-plot { width: 280px; height: 180px; margin: 0 auto 40px; position: relative; background-color: var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.8)); border: 1px solid var(--vscode-widget-border, #3c3c3c); border-radius: 8px; padding: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+.plot-line { position: absolute; bottom: 20px; left: 20px; right: 20px; height: 120px; }
+.plot-line svg { width: 100%; height: 100%; }
+.plot-path { fill: none; stroke: var(--vscode-textLink-foreground, #007acc); stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 400; stroke-dashoffset: 400; animation: drawLine 3s ease-in-out infinite; }
+@keyframes drawLine { 0% { stroke-dashoffset: 400; opacity: 0.3; } 50% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: -400; opacity: 0.3; } }
+.plot-dots { position: absolute; width: 100%; height: 100%; top: 0; left: 0; }
+.dot { position: absolute; width: 6px; height: 6px; background-color: var(--vscode-textLink-foreground, #007acc); border-radius: 50%; animation: pulse 2s ease-in-out infinite; }
+.dot:nth-child(1) { left: 25px; bottom: 45px; animation-delay: 0s; }
+.dot:nth-child(2) { left: 65px; bottom: 65px; animation-delay: 0.3s; }
+.dot:nth-child(3) { left: 105px; bottom: 50px; animation-delay: 0.6s; }
+.dot:nth-child(4) { left: 145px; bottom: 85px; animation-delay: 0.9s; }
+.dot:nth-child(5) { left: 185px; bottom: 70px; animation-delay: 1.2s; }
+.dot:nth-child(6) { left: 225px; bottom: 95px; animation-delay: 1.5s; }
+@keyframes pulse { 0%, 100% { transform: scale(1); opacity: 0.6; } 50% { transform: scale(1.5); opacity: 1; box-shadow: 0 0 10px var(--vscode-textLink-foreground, #007acc); } }
+.axis { position: absolute; background-color: var(--vscode-editor-foreground, #4a4a4a); opacity: 0.2; }
+.axis-x { bottom: 20px; left: 20px; right: 20px; height: 1px; }
+.axis-y { left: 20px; bottom: 20px; top: 20px; width: 1px; }
+.impulse-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: var(--vscode-textLink-foreground, #007acc); margin-left: 10px; vertical-align: middle; animation: pulse 2s ease-in-out infinite; }
+
+/* Split View Layout */
+.split-view-container {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg-primary);
+    position: relative;
+    z-index: 10;
+}
+
+.split-pane {
+    position: relative;
+    height: 100%;
+    display: flex;
+    /* align/justify removed to allow margin:auto centering */
+    overflow: auto !important; /* Allow native scrolling */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    flex: 1; /* Default to equal split */
+    min-width: 50px;
+}
+
+.split-pane::-webkit-scrollbar {
+    display: none;
+}
+
+.split-pane img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.pane-label {
+    position: absolute;
+    top: 8px;
+    padding: 2px 8px;
+    background: rgba(0, 0, 0, 0.4);
+    color: white;
+    font-size: 10px;
+    border-radius: 4px;
+    pointer-events: none;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#leftPane .pane-label { left: 8px; border-left: 3px solid #89d185; }
+#rightPane .pane-label { right: 8px; border-right: 3px solid #4fc1ff; }
+
+.split-divider {
+    width: 4px;
+    height: 100%;
+    background: var(--border-color);
+    cursor: col-resize;
+    position: relative;
+    z-index: 20;
+    transition: background 0.2s;
+    flex-shrink: 0;
+}
+
+.split-divider:hover, .split-divider.active {
+    background: var(--accent);
+}
+
+.divider-handle {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 14px;
+    height: 40px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.divider-handle::after {
+    content: "⋮";
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: bold;
+}
+
+/* Multi-selection in Sidebar */
+.sidebar-select {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(0, 0, 0, 0.5);
+    color: white;
+    font-size: 10px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 10;
+    transition: all 0.2s;
+    opacity: 0.5;
+}
+
+.plot-item:hover .sidebar-select,
+.sidebar-select.selected {
+    opacity: 1;
+}
+
+/* Split Mode Visual Cues */
+.split-active-btn {
+    background: var(--accent) !important;
+    color: white !important;
+}
+
+.is-split-mode .plot-item.selected-left {
+    box-shadow: inset 4px 0 0 #89d185 !important;
+    background: rgba(137, 209, 133, 0.05);
+}
+
+.is-split-mode .plot-item.selected-right {
+    box-shadow: inset 4px 0 0 #4fc1ff !important;
+    background: rgba(79, 193, 255, 0.05);
+}
+
+.is-split-mode .plot-item.selected-left.selected-right {
+    box-shadow: inset 4px 0 0 #89d185, inset 8px 0 0 #4fc1ff !important;
+}
+
+.sidebar-select.left-btn.selected { background: #89d185 !important; border-color: #89d185 !important; color: #000 !important; }
+.sidebar-select.right-btn.selected { background: #4fc1ff !important; border-color: #4fc1ff !important; color: #000 !important; }
+
+/* Focused Pane Styling */
+.split-pane.focused {
+    box-shadow: inset 0 0 15px rgba(var(--accent-rgb), 0.2);
+}
+
+.split-pane.focused .pane-label {
+    background: var(--accent);
+    color: white;
+    box-shadow: 0 0 10px rgba(0,0,0,0.3);
+}
+
+.split-pane {
+    cursor: pointer;
+}
+
+/* Annotation Styles */
+.annotation-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    display: none;
+    z-index: 100;
+}
+
+body:not(.is-split-mode) #annotationCanvas {
+    display: block;
+}
+
+body.is-split-mode .split-pane .annotation-layer {
+    display: block;
+}
+
+body.is-annotating .annotation-layer {
+    pointer-events: auto;
+    cursor: crosshair;
+}
+
+.draw-palette {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    padding: 8px;
+    gap: 8px;
+    z-index: 1000;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+}
+
+.tool-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    transition: all 0.2s;
+}
+
+.tool-btn:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.tool-btn.active {
+    background: var(--accent);
+    color: white;
+}
+
+.palette-sep {
+    height: 1px;
+    background: var(--border-color);
+    margin: 4px 0;
+}
+
+.color-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: center;
+}
+
+.color-swatch {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.2s;
+}
+
+.color-swatch:hover {
+    transform: scale(1.2);
+}
+
+.color-swatch.active {
+    border-color: white;
+    box-shadow: 0 0 5px rgba(255,255,255,0.5);
+}
+
+.annotate-active-btn {
+    background: var(--accent) !important;
+    color: white !important;
+}

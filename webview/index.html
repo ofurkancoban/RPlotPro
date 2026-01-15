@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'unsafe-inline'; connect-src ws://localhost:* ws://127.0.0.1:* blob:;">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>R Plot Viewer</title>
+    <link rel="stylesheet" type="text/css" href="${styleUri}">
+</head>
+<body>
+    <div class="header">
+        <div class="toolbar-group">
+            <div class="connection-status" style="margin-left: 0; padding-left: 0; border-left: none;">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">...</span>
+            </div>
+            
+            <div class="separator"></div>
+
+            <button class="icon-btn" onclick="nextPlot()" id="nextBtn" title="Next Plot" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-arrow-big-left"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M20 15h-8v3.586a1 1 0 0 1 -1.707 .707l-6.586 -6.586a1 1 0 0 1 0 -1.414l6.586 -6.586a1 1 0 0 1 1.707 .707v3.586h8a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1z" /></svg>
+            </button>
+            <button class="icon-btn" onclick="previousPlot()" id="prevBtn" title="Previous Plot" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-arrow-big-right"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 9h8v-3.586a1 1 0 0 1 1.707 -.707l6.586 6.586a1 1 0 0 1 0 1.414l-6.586 6.586a1 1 0 0 1 -1.707 -.707v-3.586h-8a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1z" /></svg>
+            </button>
+            
+            <div class="separator"></div>
+            
+            <button class="icon-btn" onclick="copyToClipboard()" id="copyBtn" title="Copy to Clipboard" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-copy"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M7 7m0 2.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667z" /><path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" /></svg>
+            </button>
+            <button class="icon-btn" onclick="exportPlot()" id="exportBtn" title="Save Plot" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-device-floppy"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2" /><path d="M12 14m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /><path d="M14 4l0 4l-6 0l0 -4" /></svg>
+            </button> 
+
+            <div class="separator"></div>
+
+            <button class="icon-btn" onclick="toggleZoom()" id="zoomBtn" title="Zoom">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-zoom-pan"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" /><path d="M17 17l-2.5 -2.5" /><path d="M10 4l2 -2l2 2" /><path d="M20 10l2 2l-2 2" /><path d="M4 10l-2 2l2 2" /><path d="M10 20l2 2l2 -2" /></svg>
+            </button>
+            
+            <button class="icon-btn" onclick="toggleAspectRatio()" id="aspectBtn" title="Aspect Ratio">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-ruler-2"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M17 3l4 4l-14 14l-4 -4z" /><path d="M16 7l-1.5 -1.5" /><path d="M13 10l-1.5 -1.5" /><path d="M10 13l-1.5 -1.5" /><path d="M7 16l-1.5 -1.5" /></svg>
+            </button>
+
+            <button class="icon-btn" onclick="toggleAnnotationMode()" id="annotateBtn" title="Annotate Plot">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-pencil-down"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" /><path d="M13.5 6.5l4 4" /><path d="M19 16v6" /><path d="M22 19l-3 3l-3 -3" /></svg>
+            </button>
+
+            <div class="separator"></div>
+
+            <button class="icon-btn" onclick="toggleSplitView()" id="splitBtn" title="Compare Plots (Split View)" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-columns-2"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M3 3m0 1a1 1 0 0 1 1 -1h16a1 1 0 0 1 1 1v16a1 1 0 0 1 -1 1h-16a1 1 0 0 1 -1 -1z" /><path d="M12 3l0 18" /></svg>
+            </button>
+
+            <div class="separator"></div>
+
+            <button class="icon-btn" onclick="openInNewWindow()" id="newWindowBtn" title="Open plots gallery in new window" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-window-maximize"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M3 16m0 1a1 1 0 0 1 1 -1h3a1 1 0 0 1 1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1z" /><path d="M4 12v-6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-6" /><path d="M12 8h4v4" /><path d="M16 8l-5 5" /></svg>
+            </button>
+
+            <div style="flex: 1"></div>
+
+            <span style="font-size:11px; color:var(--text-secondary); min-width:30px; text-align:center; margin-right: 8px;" id="plotInfo"></span>
+
+            <button class="icon-btn" onclick="toggleDarkMode()" id="darkModeBtn" title="Toggle Dark Mode">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-circle"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /></svg>
+            </button>
+
+            <div class="separator"></div>
+            
+            <button class="icon-btn" onclick="toggleFavoriteFilter()" id="favoriteFilterBtn" title="Show Favorites Only" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-star"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 17.75l-6.172 3.245l1.179 -6.873l-5 -4.867l6.9 -1l3.086 -6.253l3.086 6.253l6.9 1l-5 4.867l1.179 6.873z" /></svg>
+            </button>
+
+            <button class="icon-btn" onclick="clearAllPlots()" id="clearBtn" title="Clear All" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-trash"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 7l16 0" /><path d="M10 11l0 6" /><path d="M14 11l0 6" /><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" /><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" /></svg>
+            </button>
+
+            <button class="icon-btn" onclick="toggleSidebar()" id="sidebarToggle" title="Toggle Sidebar">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-layout-sidebar-right-collapse"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z" /><path d="M15 4v16" /><path d="M9 10l2 2l-2 2" /></svg>
+            </button>
+        </div>
+    </div>
+
+    <div class="main-layout">
+        <div class="plot-viewer">
+            <div class="zoom-notification" id="zoomNotification"></div>
+            <div class="zoom-notification" id="aspectNotification"></div>
+            <div class="plot-container" id="plotContainer">
+                
+                <!-- Annotation Palette -->
+                <div id="drawPalette" class="draw-palette" style="display: none;">
+                    <button class="tool-btn active" id="tool-pencil" onclick="setDrawTool('pencil')" title="Pencil">✎</button>
+                    <button class="tool-btn" id="tool-arrow" onclick="setDrawTool('arrow')" title="Arrow">↗</button>
+                    <button class="tool-btn" id="tool-text" onclick="setDrawTool('text')" title="Text">T</button>
+                    <div class="palette-sep"></div>
+                    <div class="color-picker">
+                        <div class="color-swatch active" id="color-red" style="background: #ff4757;" onclick="setDrawColor('#ff4757')"></div>
+                        <div class="color-swatch" id="color-green" style="background: #2ed573;" onclick="setDrawColor('#2ed573')"></div>
+                        <div class="color-swatch" id="color-blue" style="background: #1e90ff;" onclick="setDrawColor('#1e90ff')"></div>
+                        <div class="color-swatch" id="color-orange" style="background: #ffa502;" onclick="setDrawColor('#ffa502')"></div>
+                        <div class="color-swatch" id="color-white" style="background: #ffffff;" onclick="setDrawColor('#ffffff')"></div>
+                    </div>
+                    <div class="palette-sep"></div>
+                    <button class="tool-btn" onclick="clearAnnotations()" title="Clear All">🗑</button>
+                </div>
+
+                <div class="empty-state" id="emptyState" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; overflow: hidden;">
+                    <div class="content-wrapper" style="position: absolute; top: 45%; left: 45%; transform: translate(-50%, -50%); z-index: 10; text-align: center; scale: 65%;">
+                        <div class="animated-plot" style="margin-bottom: 20px;">
+                            <div class="axis axis-x"></div>
+                            <div class="axis axis-y"></div>
+                            <div class="plot-line">
+                                <svg viewBox="0 0 240 120" preserveAspectRatio="none">
+                                    <path class="plot-path" d="M 0 75 Q 40 25, 80 50 T 160 30 T 240 25"></path>
+                                </svg>
+                            </div>
+                            <div class="plot-dots">
+                                <div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div>
+                            </div>
+                        </div>
+                        <div style="text-align: center;">
+                            <h3 style="margin-bottom: 5px; font-weight: 400; font-size: 24px;">No Plot<div class="impulse-dot"></div></h3>
+                            <p style="font-size: 16px; opacity: 0.7;">Waiting for plot output...</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="media-wrapper" id="mainMediaWrapper" style="display: none;">
+                    <img id="plotImage" draggable="false" />
+                    <canvas id="annotationCanvas" class="annotation-layer"></canvas>
+                </div>
+                
+                <div id="splitViewContainer" class="split-view-container" style="display: none;">
+                    <div id="leftPane" class="split-pane focused" onclick="focusPane('left')">
+                        <div class="media-wrapper" id="leftMediaWrapper">
+                            <img id="leftPlot" draggable="false" />
+                            <canvas id="leftAnnotationCanvas" class="annotation-layer"></canvas>
+                        </div>
+                        <div class="pane-label" id="leftPaneLabel">Plot A</div>
+                    </div>
+                    <div id="splitDivider" class="split-divider">
+                        <div class="divider-handle"></div>
+                    </div>
+                    <div id="rightPane" class="split-pane" onclick="focusPane('right')">
+                        <div class="media-wrapper" id="rightMediaWrapper">
+                            <img id="rightPlot" draggable="false" />
+                            <canvas id="rightAnnotationCanvas" class="annotation-layer"></canvas>
+                        </div>
+                        <div class="pane-label" id="rightPaneLabel">Plot B</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar">
+            <div class="plot-list" id="plotList">
+            </div>
+        </div>
+    </div>
+    
+    <div class="modal-overlay" id="noteModal">
+        <div class="modal-content">
+            <div class="modal-header">Plot Note</div>
+            <textarea class="modal-textarea" id="noteTextarea" placeholder="Add a note for this plot..."></textarea>
+            <div class="modal-actions">
+                <button class="modal-btn modal-btn-secondary" onclick="closeNoteModal()">Cancel</button>
+                <button class="modal-btn modal-btn-primary" onclick="saveNote()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="textModal">
+        <div class="modal-content">
+            <div class="modal-header">Annotation Text</div>
+            <input type="text" class="modal-input" id="textInput" placeholder="Enter text here..." autocomplete="off">
+            <div class="modal-actions">
+                <button class="modal-btn modal-btn-secondary" onclick="closeTextModal()">Cancel</button>
+                <button class="modal-btn modal-btn-primary" onclick="confirmTextAnnotation()">Add Text</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="debugLog" style="display: none; position: fixed; bottom: 0; left: 0; width: 100%; height: 200px; background: rgba(0,0,0,0.85); color: #0f0; font-family: monospace; font-size: 10px; overflow-y: auto; z-index: 10000; padding: 10px; border-top: 1px solid #0f0;">
+        <div style="font-weight: bold; margin-bottom: 5px;">DEBUG CONSOLE (Ctrl+Shift+D to toggle)</div>
+    </div>
+    <script src="${scriptUri}"></script>
+</body>
+</html>

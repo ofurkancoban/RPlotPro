@@ -28,7 +28,8 @@ local(
 
         # State variables (now local to this block)
         clients <- list()
-        plots <- list() # Stores public info for clients (id, data, timestamp)
+        plots <- list() # Stores metadata (id, timestamp, format, etc.)
+        raw_plots <- list() # Stores raw bytes by ID
         recordings <- list() # Stores internal recordedPlot objects by ID
         server <- NULL
         last_plot <- NULL
@@ -65,12 +66,8 @@ local(
                 return(NULL)
             }
 
-            if (width < 50) {
-                width <- 50
-            }
-            if (height < 50) {
-                height <- 50
-            }
+            if (width < 50) width <- 50
+            if (height < 50) height <- 50
 
             tryCatch(
                 {
@@ -87,20 +84,14 @@ local(
                     dev.off()
 
                     if (file.exists(temp_file)) {
-                        plot_data <- base64encode(temp_file)
-                        paste0("data:image/svg+xml;base64,", plot_data)
+                        readBin(temp_file, "raw", file.info(temp_file)$size)
                     } else {
                         NULL
                     }
                 },
-                error = function(e) {
-                    NULL
-                },
+                error = function(e) NULL,
                 finally = {
-                    # Always cleanup temp file
-                    if (exists("temp_file") && file.exists(temp_file)) {
-                        unlink(temp_file)
-                    }
+                    if (exists("temp_file") && file.exists(temp_file)) unlink(temp_file)
                 }
             )
         }
@@ -112,11 +103,29 @@ local(
                 tryCatch(
                     {
                         data <- fromJSON(message)
-                        if (data$type == "get_plots") {
+                        if (data$type == "ping") {
+                            ws$send(toJSON(list(type = "pong")))
+                        } else if (data$type == "get_plots") {
+                            # Send metadata list
                             ws$send(toJSON(
                                 list(type = "plot_list", plots = plots),
                                 auto_unbox = TRUE
                             ))
+                            # Follow up with binary data for each if requested or just let client ask
+                            # For now, we'll send binary for the most recent one if history is shown
+                        } else if (data$type == "request_binary") {
+                            pid <- as.character(data$plot_id)
+                            if (!is.null(raw_plots[[pid]])) {
+                                # Find format from metadata
+                                fmt <- "svg" 
+                                for (p in plots) {
+                                  if (as.character(p$id) == pid) {
+                                    fmt <- p$format
+                                    break
+                                  }
+                                }
+                                send_binary_to_client(ws, "update_plot", raw_plots[[pid]], list(id = pid, format = fmt))
+                            }
                         } else if (data$type == "clear_all") {
                             # Assigned to parent scope variables
                             plots <<- list()
@@ -137,35 +146,28 @@ local(
                         } else if (data$type == "resize") {
                             client_dims$width <<- data$width
                             client_dims$height <<- data$height
-                            new_plot_data <- handle_resize_request(
+                            raw_data <- handle_resize_request(
                                 data$width,
                                 data$height,
                                 data$plot_id
                             )
-                            if (!is.null(new_plot_data)) {
+                            if (!is.null(raw_data)) {
                                 if (!is.null(data$plot_id)) {
-                                    idx <- 0
-                                    for (i in seq_along(plots)) {
-                                        if (
-                                            as.character(plots[[i]]$id) ==
-                                                as.character(data$plot_id)
-                                        ) {
-                                            idx <- i
+                                    pid <- as.character(data$plot_id)
+                                    raw_plots[[pid]] <<- raw_data
+                                    
+                                    # Find format
+                                    fmt <- "svg"
+                                    for (p in plots) {
+                                        if (as.character(p$id) == pid) {
+                                            fmt <- p$format
                                             break
                                         }
                                     }
-                                    if (idx > 0) {
-                                        plots[[idx]]$data <<- new_plot_data
-                                    }
+                                    send_binary_to_client(ws, "update_plot", raw_data, list(id = pid, format = fmt))
+                                } else {
+                                    send_binary_to_client(ws, "update_plot", raw_data, list(format = "svg"))
                                 }
-                                ws$send(toJSON(
-                                    list(
-                                        type = "update_plot",
-                                        plot_id = data$plot_id,
-                                        data = new_plot_data
-                                    ),
-                                    auto_unbox = TRUE
-                                ))
                             }
                         } else if (data$type == "set_active_file") {
                             # Functionality removed as per cleanup
@@ -216,16 +218,28 @@ local(
             }
         }
 
-        send_plot_to_clients <- function(plot_data, metadata = list()) {
-            message <- toJSON(
-                list(type = "new_plot", data = plot_data, metadata = metadata),
-                auto_unbox = TRUE
-            )
-            for (client in clients) {
-                tryCatch(client$send(message), error = function(e) {})
-            }
+        send_binary_to_client <- function(client_ws, type, bin_payload, metadata = list()) {
+            metadata$type <- type
+            meta_json <- toJSON(metadata, auto_unbox = TRUE)
+            meta_bytes <- charToRaw(meta_json)
+            meta_len <- length(meta_bytes)
+            
+            # Pack: [Uint32 LEN][JSON META][PAYLOAD]
+            con <- rawConnection(raw(0), "wb")
+            writeBin(as.integer(meta_len), con, size = 4, endian = "big")
+            writeBin(meta_bytes, con)
+            writeBin(bin_payload, con)
+            full_frame <- rawConnectionValue(con)
+            close(con)
+            
+            tryCatch(client_ws$send(full_frame), error = function(e) {})
         }
 
+        send_plot_to_clients <- function(raw_data, metadata = list()) {
+            for (client in clients) {
+                send_binary_to_client(client, "new_plot", raw_data, metadata)
+            }
+        }
 
         process_internal_capture <- function(
             current_plot,
@@ -256,11 +270,8 @@ local(
                         unlink(temp_file)
                         return()
                     }
-                    plot_data <- base64encode(temp_file)
-                    plot_data_uri <- paste0(
-                        "data:image/svg+xml;base64,",
-                        plot_data
-                    )
+                    
+                    raw_data <- readBin(temp_file, "raw", fsize)
                     id <- as.character(as.numeric(Sys.time()) * 1000)
 
                     # Determine source code information
@@ -273,32 +284,24 @@ local(
 
                     plot_metadata <- list(
                         id = id,
-                        data = plot_data_uri,
                         timestamp = format(Sys.time(), "%H:%M:%S"),
-                        width = "100%",
-                        height = "auto"
+                        format = "svg"
                     )
 
-                    # Add source info if available
-
-
-                    # Memory leak prevention: enforce MAX_PLOTS limit
                     MAX_PLOTS <- 200
                     if (length(plots) >= MAX_PLOTS) {
-                        # Remove oldest plot
                         oldest_id <- plots[[1]]$id
                         recordings[[oldest_id]] <<- NULL
+                        raw_plots[[oldest_id]] <<- NULL
                         plots <<- plots[-1]
                     }
 
                     plots[[length(plots) + 1]] <<- plot_metadata
                     recordings[[id]] <<- current_plot
+                    raw_plots[[id]] <<- raw_data
                     last_plot <<- current_plot
 
-                    send_plot_to_clients(
-                        plot_data_uri,
-                        plot_metadata
-                    )
+                    send_plot_to_clients(raw_data, plot_metadata)
                     unlink(temp_file)
                 }
             }
@@ -500,9 +503,9 @@ local(
 
         # Expose run_file helper (noop now but kept for compatibility)
         .vsc_rplot$run_file <- function(file_path) {
-             # source highlighting disabled
-             utils::source(file_path)
-             invisible(NULL)
+            # source highlighting disabled
+            utils::source(file_path)
+            invisible(NULL)
         }
     },
     envir = .vsc_rplot
