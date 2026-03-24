@@ -14,7 +14,7 @@ let isSplitMode = false;
 let leftIndex = typeof state.leftIndex === 'number' ? state.leftIndex : -1;
 let rightIndex = typeof state.rightIndex === 'number' ? state.rightIndex : -1;
 let isDraggingDivider = false;
-let isDarkMode = typeof state.darkMode === 'boolean' ? state.darkMode : false;
+let isDarkMode = false; // Always start in Light Mode by default
 let lastCanvasData = new Map(); // Store base64 canvas data per plot ID
 
 // Annotation State
@@ -25,6 +25,7 @@ let isDrawing = false;
 let activeCanvas = null;
 let activeCtx = null;
 let activePane = 'left';
+let paletteState = state.palette || { x: 20, y: 20, isHorizontal: true };
 
 // Rehydrate annotations if available
 if (state.annotations) {
@@ -157,6 +158,7 @@ function updatePlotDimensions(wrapperId) {
     
     if (isAnnotating && activeCanvas && activeCanvas.parentElement === wrapper) {
         setupActiveCanvas();
+        updatePaletteScaling();
         const pid = isSplitMode ? 
             (wrapperId === 'leftMediaWrapper' ? plots[leftIndex]?.id : plots[rightIndex]?.id) : 
             plots[currentIndex]?.id;
@@ -462,8 +464,8 @@ async function exportAsFormat(format) {
 
     log(`Preparing export for plot ${plot.id} as ${format} (Has annotation: ${hasAnnotation})`);
 
-    // Case 1: Pure SVG (No annotations)
-    if (plot.format === 'svg' && format === 'svg' && !hasAnnotation) {
+    // Case 1: Pure SVG (Only for single view)
+    if (!isSplitMode && plot.format === 'svg' && format === 'svg' && !hasAnnotation) {
         log('Direct SVG export...');
         try {
             const response = await fetch(plot.data);
@@ -480,9 +482,15 @@ async function exportAsFormat(format) {
     }
 
     // Case 2: SVG export with annotations -> Generate Composite SVG
-    if (format === 'svg' && hasAnnotation) {
+    if (format === 'svg') {
         log('Generating composite SVG...');
-        const compositeData = await generateCompositeSVG(plot);
+        let compositeData;
+        if (isSplitMode) {
+            compositeData = await generateSplitCompositeSVG(plots[leftIndex], plots[rightIndex]);
+        } else if (hasAnnotation) {
+            compositeData = await generateCompositeSVG(plot);
+        }
+
         if (compositeData) {
             vscode.postMessage({ command: 'save_data', data: compositeData, format: 'svg' });
             return;
@@ -490,23 +498,38 @@ async function exportAsFormat(format) {
     }
 
     // Case 3: Raster (PNG) or Fallback
-    getCombinedPlotBlob(plot, (blob) => {
-        if (!blob) {
-            log('Failed to create plot blob');
-            vscode.postMessage({ command: 'info', text: 'Export failed: Could not process image' });
-            return;
-        }
-        
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            vscode.postMessage({ 
-                command: 'save_data', 
-                data: reader.result, 
-                format: format 
-            });
-        };
-        reader.readAsDataURL(blob);
-    });
+    if (isSplitMode) {
+        getSplitCombinedBlob(plots[leftIndex], plots[rightIndex], (blob) => {
+            if (!blob) {
+                log('Failed to create split plot blob');
+                vscode.postMessage({ command: 'info', text: 'Export failed: Could not process images' });
+                return;
+            }
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                vscode.postMessage({ command: 'save_data', data: reader.result, format: format });
+            };
+            reader.readAsDataURL(blob);
+        });
+    } else {
+        getCombinedPlotBlob(plot, (blob) => {
+            if (!blob) {
+                log('Failed to create plot blob');
+                vscode.postMessage({ command: 'info', text: 'Export failed: Could not process image' });
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                vscode.postMessage({ 
+                    command: 'save_data', 
+                    data: reader.result, 
+                    format: format 
+                });
+            };
+            reader.readAsDataURL(blob);
+        });
+    }
 }
 
 async function generateCompositeSVG(plot) {
@@ -865,10 +888,7 @@ function openInNewWindow() {
 
 function toggleDarkMode() {
     isDarkMode = !isDarkMode;
-    const plotContainer = document.getElementById('plotContainer');
-    const darkModeBtn = document.getElementById('darkModeBtn');
-    
-    if (plotContainer) plotContainer.classList.toggle('dark-mode', isDarkMode);
+    document.body.classList.toggle('dark-mode', isDarkMode);
     
     updateDarkModeUI();
     
@@ -1039,28 +1059,27 @@ function copyToClipboard() {
         log('Copy failed: No plot selected');
         return;
     }
-    const plot = plots[currentIndex];
-    log('Copying to clipboard: ' + plot.id);
 
-    try {
-        getCombinedPlotBlob(plot, (blob) => {
-            if (!blob) {
-                log('Failed to create blob for clipboard');
-                return;
-            }
-            
-            const data = [new ClipboardItem({ [blob.type]: blob })];
-            navigator.clipboard.write(data).then(() => {
-                log('Clipboard write success');
-                vscode.postMessage({ command: 'info', text: 'Copied to clipboard (with annotations)' });
-            }).catch(err => {
-                log('Clipboard API failed: ' + err);
-                // Fallback: Show error to user
-                vscode.postMessage({ command: 'info', text: 'Copy failed: Clipboard access required' });
-            });
+    const processBlob = (blob) => {
+        if (!blob) {
+            log('Failed to create blob for clipboard');
+            return;
+        }
+        
+        const data = [new ClipboardItem({ [blob.type]: blob })];
+        navigator.clipboard.write(data).then(() => {
+            log('Clipboard write success');
+            vscode.postMessage({ command: 'info', text: 'Copied to clipboard' + (isSplitMode ? ' (Split View)' : '') });
+        }).catch(err => {
+            log('Clipboard API failed: ' + err);
+            vscode.postMessage({ command: 'info', text: 'Copy failed: Clipboard access required' });
         });
-    } catch (e) {
-        log('Copy error: ' + e);
+    };
+
+    if (isSplitMode) {
+        getSplitCombinedBlob(plots[leftIndex], plots[rightIndex], processBlob);
+    } else {
+        getCombinedPlotBlob(plots[currentIndex], processBlob);
     }
 }
 
@@ -1350,7 +1369,8 @@ function saveState() {
         isSplitMode,
         leftIndex,
         rightIndex,
-        annotations: lastCanvasData.size > 0 ? Object.fromEntries(lastCanvasData) : undefined
+        annotations: lastCanvasData.size > 0 ? Object.fromEntries(lastCanvasData) : undefined,
+        palette: paletteState
     });
 }
 
@@ -1438,6 +1458,10 @@ function initSplitDivider() {
         percentage = Math.max(15, Math.min(85, percentage));
         
         leftPane.style.flex = `0 0 ${percentage}%`;
+        
+        // Immediate UI update for plot dimensions
+        updatePlotDimensions('leftMediaWrapper');
+        updatePlotDimensions('rightMediaWrapper');
     };
 
     const handleMouseUp = () => {
@@ -1445,6 +1469,17 @@ function initSplitDivider() {
             isDraggingDivider = false;
             divider.classList.remove('active');
             document.body.style.cursor = 'default';
+            
+            // Send resize events to R backend for both plots
+            // Debounce or slightly delay to ensure DOM has settled
+            setTimeout(() => {
+                const oldActive = activePane;
+                activePane = 'left';
+                sendResizeEvent();
+                activePane = 'right';
+                sendResizeEvent();
+                activePane = oldActive;
+            }, 50);
         }
     };
 
@@ -1526,11 +1561,161 @@ function toggleAnnotationMode() {
     if (annotateBtn) annotateBtn.classList.toggle('annotate-active-btn', isAnnotating);
     
     const palette = document.getElementById('drawPalette');
-    if (palette) palette.style.display = isAnnotating ? 'flex' : 'none';
+    if (palette) {
+        palette.style.display = isAnnotating ? 'flex' : 'none';
+        if (isAnnotating) {
+            applyPaletteState();
+            initPaletteDrag();
+            updatePaletteScaling();
+        }
+    }
     
     if (isAnnotating) {
         setupActiveCanvas();
     }
+}
+
+let orientationSwitchTimer = null;
+
+function togglePaletteOrientation() {
+    const palette = document.getElementById('drawPalette');
+    if (palette) {
+        palette.classList.add('no-transition');
+        palette.classList.add('is-switching');
+        
+        // Clear old timer if any
+        if (orientationSwitchTimer) {
+            clearTimeout(orientationSwitchTimer);
+        }
+        
+        // Keep it open for 1.5s so user can re-hover
+        orientationSwitchTimer = setTimeout(() => {
+            palette.classList.remove('is-switching');
+            orientationSwitchTimer = null;
+        }, 1500);
+    }
+    
+    paletteState.isHorizontal = !paletteState.isHorizontal;
+    
+    // Immediate orientation apply
+    if (palette) {
+        palette.classList.toggle('palette-horizontal', paletteState.isHorizontal);
+    }
+    
+    applyPaletteState(true); // pass true to use immediate update
+    
+    if (palette) {
+        // Double rAF to ensure browser has completely settled the instant layout
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                palette.classList.remove('no-transition');
+            });
+        });
+    }
+    saveState();
+}
+
+function applyPaletteState(immediate = false) {
+    const palette = document.getElementById('drawPalette');
+    if (!palette) return;
+    
+    palette.classList.toggle('palette-horizontal', paletteState.isHorizontal);
+    
+    const container = document.getElementById('plotContainer');
+    if (container) {
+        const updatePos = () => {
+            // Force a layout reflow to ensure getBoundingClientRect/offsetWidth are fresh
+            const _reflow = palette.offsetHeight;
+            const rect = container.getBoundingClientRect();
+            
+            // Clamp current position to new constraints
+            paletteState.x = Math.max(4, Math.min(paletteState.x, rect.width - palette.offsetWidth - 4));
+            paletteState.y = Math.max(4, Math.min(paletteState.y, rect.height - palette.offsetHeight - 4));
+            
+            palette.style.left = paletteState.x + 'px';
+            palette.style.top = paletteState.y + 'px';
+        };
+
+        if (immediate) {
+            updatePos();
+        } else {
+            requestAnimationFrame(updatePos);
+        }
+    } else {
+        palette.style.left = paletteState.x + 'px';
+        palette.style.top = paletteState.y + 'px';
+    }
+}
+
+function initPaletteDrag() {
+    const palette = document.getElementById('drawPalette');
+    const handle = document.getElementById('paletteHandle');
+    if (!palette || !handle || palette.hasDragListener) return;
+
+    let isPaletteDragging = false;
+    let offsetX, offsetY;
+
+    handle.addEventListener('mousedown', (e) => {
+        isPaletteDragging = true;
+        palette.classList.add('is-dragging');
+        
+        const rect = palette.getBoundingClientRect();
+        offsetX = e.clientX - rect.left;
+        offsetY = e.clientY - rect.top;
+        
+        palette.style.opacity = '0.9';
+        e.stopPropagation();
+        e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isPaletteDragging) return;
+        
+        const container = document.getElementById('plotContainer');
+        const rect = container.getBoundingClientRect();
+        
+        // Calculate new position relative to the container
+        let x = e.clientX - rect.left - offsetX;
+        let y = e.clientY - rect.top - offsetY;
+        
+        // Constrain to container with small padding
+        const padding = 4;
+        x = Math.max(padding, Math.min(x, rect.width - palette.offsetWidth - padding));
+        y = Math.max(padding, Math.min(y, rect.height - palette.offsetHeight - padding));
+        
+        paletteState.x = x;
+        paletteState.y = y;
+        palette.style.left = x + 'px';
+        palette.style.top = y + 'px';
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (isPaletteDragging) {
+            isPaletteDragging = false;
+            palette.classList.remove('is-dragging');
+            palette.style.opacity = '1';
+            saveState();
+        }
+    });
+
+    palette.hasDragListener = true;
+}
+
+function updatePaletteScaling() {
+    const palette = document.getElementById('drawPalette');
+    const container = document.getElementById('plotContainer');
+    if (!palette || !container || !isAnnotating) return;
+
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+    
+    // Auto-scale palette if container is too small
+    let scale = 1.0;
+    if (cw < 400 || ch < 400) {
+        scale = Math.max(0.6, Math.min(cw / 500, ch / 500));
+    }
+    
+    palette.style.transform = `scale(${scale})`;
 }
 
 function setupActiveCanvas() {
@@ -1624,17 +1809,30 @@ function handleDrawEnd(e) {
 }
 
 function drawArrow(ctx, fromX, fromY, toX, toY) {
-    const headLength = 15;
+    const headLength = 20;
     const angle = Math.atan2(toY - fromY, toX - fromX);
-    ctx.beginPath();
-    ctx.moveTo(fromX, fromY);
-    ctx.lineTo(toX, toY);
-    ctx.stroke();
+    const headAngle = Math.PI / 6; // 30 degrees offset = 60 degrees total (Equilateral)
+    
+    // Stop the line slightly before the tip so the head defines the sharp point
+    const lineEndX = toX - 5 * Math.cos(angle);
+    const lineEndY = toY - 5 * Math.sin(angle);
     
     ctx.beginPath();
-    ctx.moveTo(toX, toY);
-    ctx.lineTo(toX - headLength * Math.cos(angle - Math.PI / 6), toY - headLength * Math.sin(angle - Math.PI / 6));
-    ctx.lineTo(toX - headLength * Math.cos(angle + Math.PI / 6), toY - headLength * Math.sin(angle + Math.PI / 6));
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(lineEndX, lineEndY);
+    ctx.stroke();
+    
+    // Draw the sharp arrow head
+    ctx.beginPath();
+    ctx.moveTo(toX, toY); // This is the real tip
+    ctx.lineTo(
+        toX - headLength * Math.cos(angle - headAngle), 
+        toY - headLength * Math.sin(angle - headAngle)
+    );
+    ctx.lineTo(
+        toX - headLength * Math.cos(angle + headAngle), 
+        toY - headLength * Math.sin(angle + headAngle)
+    );
     ctx.closePath();
     ctx.fill();
 }
@@ -1689,6 +1887,7 @@ function restoreAnnotation(plotId, canvasId) {
 
 // Global resize handler for canvases
 window.addEventListener('resize', () => {
+    updatePaletteScaling();
     if (isSplitMode) {
         if (leftIndex >= 0) restoreAnnotation(plots[leftIndex].id, 'leftAnnotationCanvas');
         if (rightIndex >= 0) restoreAnnotation(plots[rightIndex].id, 'rightAnnotationCanvas');
@@ -1737,10 +1936,120 @@ function getCombinedPlotBlob(plot, callback) {
     img.src = plot.data;
 }
 
+async function getSplitCombinedBlob(plotL, plotR, callback) {
+    const loadImg = (url) => new Promise((res, rej) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => res(img);
+        img.onerror = rej;
+        img.src = url;
+    });
+
+    try {
+        const [imgL, imgR] = await Promise.all([loadImg(plotL.data), loadImg(plotR.data)]);
+        const scale = 2; // High DPI
+        const wL = (imgL.naturalWidth || 800) * scale;
+        const hL = (imgL.naturalHeight || 600) * scale;
+        const wR = (imgR.naturalWidth || 800) * scale;
+        const hR = (imgR.naturalHeight || 600) * scale;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = wL + wR;
+        canvas.height = Math.max(hL, hR);
+
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw Left
+        ctx.drawImage(imgL, 0, (canvas.height - hL) / 2, wL, hL);
+        const annoL = lastCanvasData.get(String(plotL.id));
+        if (annoL) await drawAnno(ctx, annoL, 0, (canvas.height - hL) / 2, wL, hL);
+
+        // Draw Right
+        ctx.drawImage(imgR, wL, (canvas.height - hR) / 2, wR, hR);
+        const annoR = lastCanvasData.get(String(plotR.id));
+        if (annoR) await drawAnno(ctx, annoR, wL, (canvas.height - hR) / 2, wR, hR);
+
+        canvas.toBlob(callback, 'image/png', 0.95);
+    } catch (e) {
+        log('Split PNG generation failed: ' + e);
+        callback(null);
+    }
+}
+
+async function drawAnno(ctx, data, x, y, w, h) {
+    return new Promise((res) => {
+        const img = new Image();
+        img.onload = () => {
+            ctx.drawImage(img, x, y, w, h);
+            res();
+        };
+        img.onerror = () => res();
+        img.src = data;
+    });
+}
+
+async function generateSplitCompositeSVG(plotL, plotR) {
+    try {
+        const fetchBase64 = async (url) => {
+            const r = await fetch(url);
+            const blob = await r.blob();
+            return new Promise((res) => {
+                const reader = new FileReader();
+                reader.onloadend = () => res(reader.result);
+                reader.readAsDataURL(blob);
+            });
+        };
+
+        const loadSize = (url) => new Promise((res) => {
+            const img = new Image();
+            img.onload = () => res({ w: img.naturalWidth || 800, h: img.naturalHeight || 600 });
+            img.onerror = () => res({ w: 800, h: 600 });
+            img.src = url;
+        });
+
+        const [dataL, dataR, sizeL, sizeR] = await Promise.all([
+            fetchBase64(plotL.data),
+            fetchBase64(plotR.data),
+            loadSize(plotL.data),
+            loadSize(plotR.data)
+        ]);
+
+        const annoL = lastCanvasData.get(String(plotL.id)) || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+        const annoR = lastCanvasData.get(String(plotR.id)) || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+        const totalW = sizeL.w + sizeR.w;
+        const totalH = Math.max(sizeL.h, sizeR.h);
+
+        const svg = `
+<svg width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}" xmlns="http://www.w3.org/2000/svg">
+    <g transform="translate(0, ${(totalH - sizeL.h) / 2})">
+        <image href="${dataL}" width="${sizeL.w}" height="${sizeL.h}" />
+        <image href="${annoL}" width="${sizeL.w}" height="${sizeL.h}" />
+    </g>
+    <g transform="translate(${sizeL.w}, ${(totalH - sizeR.h) / 2})">
+        <image href="${dataR}" width="${sizeR.w}" height="${sizeR.h}" />
+        <image href="${annoR}" width="${sizeR.w}" height="${sizeR.h}" />
+    </g>
+</svg>`.trim();
+
+        return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+    } catch (e) {
+        log('Split SVG generation failed: ' + e);
+        return null;
+    }
+}
+
 // --- INITIALIZATION ---
+const sidebarState = typeof state.sidebarHidden === 'boolean' ? state.sidebarHidden : false;
+const sidebarEl = document.querySelector('.sidebar');
+if (sidebarEl) {
+    sidebarEl.classList.toggle('sidebar-hidden', sidebarState);
+}
+
 if (isDarkMode) {
-    const pc = document.getElementById('plotContainer');
-    if (pc) pc.classList.add('dark-mode');
+    document.body.classList.add('dark-mode');
 }
 updateDarkModeUI();
 refreshLayout();
