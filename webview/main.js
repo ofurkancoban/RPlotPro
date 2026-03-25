@@ -868,8 +868,6 @@ function showPlot(index, shouldScroll = true) {
             }
         }
     }
-    
-    sendResizeEvent();
 }
 
 function toggleSidebar() {
@@ -1722,11 +1720,33 @@ function setupActiveCanvas() {
     let canvasId = isSplitMode ? (activePane + 'AnnotationCanvas') : 'annotationCanvas';
     activeCanvas = document.getElementById(canvasId);
     if (activeCanvas) {
-        // Match canvas size to container
         const container = activeCanvas.parentElement;
-        activeCanvas.width = container.clientWidth;
-        activeCanvas.height = container.clientHeight;
+        const newW = container.clientWidth;
+        const newH = container.clientHeight;
+        
+        // Only reset if size changed or it was 0 (setting width/height always clears)
+        if (activeCanvas.width !== newW || activeCanvas.height !== newH) {
+            activeCanvas.width = newW;
+            activeCanvas.height = newH;
+        }
+
         activeCtx = activeCanvas.getContext('2d');
+        
+        // Restore existing drawing for this plot
+        const pid = isSplitMode ? 
+            (activePane === 'left' ? plots[leftIndex]?.id : plots[rightIndex]?.id) : 
+            plots[currentIndex]?.id;
+            
+        if (pid) {
+            const savedData = lastCanvasData.get(String(pid));
+            if (savedData) {
+                const img = new Image();
+                img.onload = () => {
+                    activeCtx.drawImage(img, 0, 0);
+                };
+                img.src = savedData;
+            }
+        }
         
         // Attach listeners if not already attached
         if (!activeCanvas.hasListener) {
@@ -1845,6 +1865,7 @@ function saveAnnotationToHistory() {
     
     if (pid) {
         lastCanvasData.set(String(pid), activeCanvas.toDataURL());
+        saveState(); // PERSIST TO VSCODE STATE
     }
 }
 

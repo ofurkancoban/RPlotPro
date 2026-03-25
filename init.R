@@ -1,9 +1,9 @@
 # R Plot Pro Initialization Script
 # This script is automatically sourced by the VS Code extension
 
-# Stealth mode: Clear the 'source(...)' command from console immediately
+# Stealth mode: Clear up to 6 lines of 'source(...)' command (Nuclear Stealth)
 if (interactive()) {
-    cat("\033[A\r\033[2K", sep = "")
+    cat("\033[A\033[2K\033[A\033[2K\033[A\033[2K\033[A\033[2K\033[A\033[2K\033[A\033[2K\r", sep = "")
 }
 
 local({

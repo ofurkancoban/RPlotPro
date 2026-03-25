@@ -838,30 +838,31 @@ body.is-annotating .annotation-layer {
     border-radius: 10px; 
     display: flex;
     flex-direction: column;
-    padding: 0; 
+    padding: 4px; 
     gap: 0;
     z-index: 1000;
     box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    /* Robust static delay: All layout properties move together after 2s */
+    /* Restore smooth transition for the container */
     transition: 
         left 0s linear, 
         top 0s linear, 
-        max-width 0.3s ease-in-out 2s, 
-        max-height 0.3s ease-in-out 2s,
-        padding 0.3s ease-in-out 2s,
-        gap 0.3s ease-in-out 2s,
-        border-radius 0.3s ease-in-out 2s,
-        opacity 0.3s ease-in-out 2s;
+        max-width 0.3s ease-in-out, 
+        max-height 0.3s ease-in-out,
+        padding 0.3s ease-in-out, 
+        gap 0.3s ease-in-out,
+        border-radius 0.3s ease-in-out,
+        opacity 0.2s ease-in-out;
+    /* We handle the 2s pull-back delay on the non-hover state explicitly now */
     user-select: none;
     transform-origin: top left; 
     overflow: hidden;
     width: auto;
     height: auto;
-    /* Compact mode: Rounded square matching tools */
-    min-width: 36px;
-    min-height: 36px;
-    max-width: 36px;
-    max-height: 36px;
+    /* Compact mode: Matching tools (32px) + padding (4px * 2) = 40px */
+    min-width: 40px;
+    min-height: 40px;
+    max-width: 40px;
+    max-height: 40px;
     justify-content: center;
     align-items: center;
     backdrop-filter: blur(12px);
@@ -873,18 +874,36 @@ body.is-annotating .annotation-layer {
     transition: none !important;
 }
 
-.draw-palette:hover,
 .draw-palette.is-dragging,
 .draw-palette.is-switching {
-    max-width: 500px;
+    max-width: 40px; /* Lock width for vertical expansion */
     max-height: 500px;
-    border-radius: 12px;
-    padding: 6px;
-    gap: 6px;
+    border-radius: 10px;
+    gap: 4px;
+    padding: 4px;
+    justify-content: flex-start;
 }
-/* For hover state specifically, we want tools to appear without 2s delay */
+
 .draw-palette:hover {
+    max-width: 40px; /* Lock width for vertical expansion */
+    max-height: 500px;
+    border-radius: 10px;
+    gap: 4px;
+    padding: 4px;
+    justify-content: flex-start;
     transition-delay: 0s !important;
+}
+
+.draw-palette.palette-horizontal.is-dragging,
+.draw-palette.palette-horizontal.is-switching,
+.draw-palette.palette-horizontal:hover {
+    max-width: 500px;
+    max-height: 40px; /* Lock height for horizontal expansion */
+}
+
+/* Ensure the pull-back (collapse) has the 2s delay */
+.draw-palette:not(:hover):not(.is-dragging):not(.is-switching) {
+    transition-delay: 2s;
 }
 
 .draw-palette.palette-horizontal {
@@ -899,12 +918,17 @@ body.is-annotating .annotation-layer {
     align-items: center;
     justify-content: center;
     opacity: 0;
-    opacity: 0;
-    transition: all 0.3s ease-in-out;
+    /* Snap handle visibility with delay support */
+    transition: 
+        opacity 0.2s ease-in-out,
+        width 0s linear,
+        height 0s linear,
+        margin 0s linear;
 }
 
 .draw-palette:hover .palette-handle,
-.draw-palette.is-dragging .palette-handle {
+.draw-palette.is-dragging .palette-handle,
+.draw-palette.is-switching .palette-handle {
     opacity: 0.6;
     display: flex;
 }
@@ -918,9 +942,9 @@ body.is-annotating .annotation-layer {
     overflow: hidden;
     transition: 
         opacity 0.2s ease-in-out 2s,
-        width 0.3s ease-in-out 2s,
-        height 0.3s ease-in-out 2s,
-        margin 0.3s ease-in-out 2s;
+        width 0s linear 2s,
+        height 0s linear 2s,
+        margin 0s linear 2s;
 }
 
 .palette-horizontal .palette-handle {
@@ -935,10 +959,12 @@ body.is-annotating .annotation-layer {
     font-weight: bold;
     color: var(--text-primary);
     line-height: 1;
+    transition: transform 0.3s ease;
+    transform: rotate(90deg); /* Horizontal when toolbar is vertical */
 }
 
 .palette-horizontal .palette-handle::after {
-    content: "⠿";
+    transform: rotate(0deg); /* Vertical when toolbar is horizontal */
 }
 
 .tool-btn {
@@ -947,7 +973,7 @@ body.is-annotating .annotation-layer {
     border: none;
     background: transparent;
     color: var(--text-secondary);
-    border-radius: 8px;
+    border-radius: 6px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -966,11 +992,11 @@ body.is-annotating .annotation-layer {
     overflow: hidden;
     pointer-events: none;
     transition: 
+        opacity 0.2s ease-in-out 2s,
         width 0.3s ease-in-out 2s,
         height 0.3s ease-in-out 2s,
         margin 0.3s ease-in-out 2s,
-        padding 0.3s ease-in-out 2s,
-        opacity 0.2s ease-in-out 2s;
+        padding 0.3s ease-in-out 2s;
 }
 
 .tool-btn:hover {
@@ -996,7 +1022,11 @@ body.is-annotating .annotation-layer {
     height: 0;
     margin: 0;
     overflow: hidden;
-    transition: all 0.3s ease-in-out 2s;
+    transition: 
+        opacity 0.2s ease-in-out 2s,
+        width 0.3s ease-in-out 2s,
+        height 0.3s ease-in-out 2s,
+        margin 0.3s ease-in-out 2s;
 }
 
 .palette-horizontal .palette-sep {
@@ -1013,7 +1043,7 @@ body.is-annotating .annotation-layer {
     justify-content: flex-start;
     max-width: 300px;
     max-height: 300px;
-    transition: all 0.3s ease-in-out;
+    transition: opacity 0.3s ease-in-out;
 }
 
 .draw-palette:not(:hover):not(.is-dragging):not(.is-switching) .color-picker {
@@ -1023,11 +1053,16 @@ body.is-annotating .annotation-layer {
     margin: 0;
     overflow: hidden;
     pointer-events: none;
-    transition: all 0.3s ease-in-out 2s;
+    transition: 
+        opacity 0.2s ease-in-out 2s,
+        max-width 0.3s ease-in-out 2s,
+        max-height 0.3s ease-in-out 2s,
+        margin 0.3s ease-in-out 2s;
 }
 
 .draw-palette:hover .color-picker,
-.draw-palette.is-dragging .color-picker {
+.draw-palette.is-dragging .color-picker,
+.draw-palette.is-switching .color-picker {
     transition-delay: 0s;
 }
 
@@ -1041,12 +1076,12 @@ body.is-annotating .annotation-layer {
     border-radius: 50%;
     cursor: pointer;
     border: 2px solid transparent;
-    transition: transform 0.2s, opacity 0.3s ease-in-out;
+    transition: transform 0.2s, opacity 0.2s ease-in-out;
     flex-shrink: 0;
 }
 
 .draw-palette:not(:hover):not(.is-dragging) .color-swatch {
-    transition: transform 0.2s, opacity 0.3s ease-in-out 2s;
+    transition: transform 0.2s, opacity 0.2s ease-in-out 2s;
 }
 
 .draw-palette:hover .color-swatch,

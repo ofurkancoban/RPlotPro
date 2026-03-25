@@ -106,9 +106,12 @@ export function activate(context: vscode.ExtensionContext) {
     const uniqueConfigPath = path.join(os.tmpdir(), `${configId}.json`);
     const initRPath = path.join(context.extensionPath, 'init.R');
     const normalizedInitPath = initRPath.replace(/\\/g, '/');
+    const initJlPath = path.join(context.extensionPath, 'init.jl');
+    const normalizedJlPath = initJlPath.replace(/\\/g, '/');
 
     context.environmentVariableCollection.replace('VSCODE_R_PLOT_CONFIG', uniqueConfigPath);
     context.environmentVariableCollection.replace('VSC_R_PLOT_INIT', normalizedInitPath);
+    context.environmentVariableCollection.replace('VSC_JL_PLOT_INIT', normalizedJlPath);
 
     plotProvider.setSessionConfigPath(uniqueConfigPath);
 
@@ -168,16 +171,30 @@ export function activate(context: vscode.ExtensionContext) {
     const autoAttach = config.get('autoAttach', true);
 
     if (autoAttach) {
-        const setupCmd = `source('${normalizedInitPath}')`;
+        const rSetupCmd = `source('${normalizedInitPath}')`;
+        const juliaSetupCmd = `include("${normalizedJlPath}")`;
         const injectedTerminals = new Set<vscode.Terminal>();
 
         const tryInject = (terminal: vscode.Terminal) => {
             if (injectedTerminals.has(terminal)) return;
 
-            // Only attach to terminals that look like R terminals
-            // and avoid generic shells to prevent "zsh: no matches found" errors
-            if (terminal.name === "R Interactive" || terminal.name === "R" || (terminal.name.includes("R") && !terminal.name.includes("zsh") && !terminal.name.includes("bash"))) {
-                terminal.sendText(setupCmd, true);
+            const name = terminal.name;
+            // More specific check to avoid non-R terminals like "Julia REPL"
+            // \bR\b ensures we match R as a standalone word, not as a character in "REPL"
+            const isRTerminal = 
+                name === "R Interactive" || 
+                name === "R" || 
+                name.startsWith("R: ") || 
+                name.startsWith("R [") ||
+                (/\bR\b/.test(name) && !/(Julia|Python|Node|IPython)/i.test(name) && !name.includes("zsh") && !name.includes("bash"));
+            
+            const isJuliaTerminal = name.toLowerCase().includes("julia");
+
+            if (isRTerminal) {
+                terminal.sendText(rSetupCmd, true);
+                injectedTerminals.add(terminal);
+            } else if (isJuliaTerminal) {
+                terminal.sendText(juliaSetupCmd, true);
                 injectedTerminals.add(terminal);
             }
         };
