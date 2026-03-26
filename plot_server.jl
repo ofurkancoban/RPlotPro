@@ -108,18 +108,60 @@ function is_plot_object(x)
     return false
 end
 
-function capture_and_send(plot_obj)
+function capture_and_send(plot_obj, update_id=nothing, width=nothing, height=nothing)
     try
         last_plot[] = plot_obj
         
-        # Capture SVG
+        # Use provided dimensions or fallback to global Ref
+        w = isnothing(width) ? client_dims[].width : round(Int, Float64(width))
+        h = isnothing(height) ? client_dims[].height : round(Int, Float64(height))
+        
+        # Ensure we update client_dims if explicit ones were provided
+        if !isnothing(width) && !isnothing(height)
+            client_dims[] = (width=w, height=h)
+        end
+        
+        # 1. Force size for common libraries if possible
+        obj_type = string(typeof(plot_obj))
+        if occursin("Plots.Plot", obj_type)
+            try
+                # Plots.jl Re-wrapping: The most reliable way to enforce a new aspect ratio
+                # is to reconstruct the plot object with the target size.
+                plot_obj = Base.invokelatest(Main.Plots.plot, plot_obj, size=(w, h))
+                last_plot[] = plot_obj
+            catch
+                try
+                    # Fallback for older Plots.jl versions or specific backends
+                    plot_obj.attr[:size] = (w, h)
+                    if hasproperty(plot_obj, :o) && hasproperty(plot_obj.o, :size)
+                        plot_obj.o.size = (w, h)
+                    end
+                catch
+                end
+            end
+        elseif occursin("Makie.Figure", obj_type) || occursin("Makie.Scene", obj_type)
+            try
+                # Makie: Use the official resize! function.
+                Base.invokelatest(Main.Makie.resize!, plot_obj, w, h)
+            catch
+                try
+                    if hasproperty(plot_obj, :scene)
+                        Base.invokelatest(Main.Makie.resize!, plot_obj.scene, w, h)
+                    end
+                catch
+                end
+            end
+        end
+        
+        # Capture with size hints via IOContext - crucial for Makie/Plots.jl
         io = IOBuffer()
-        # Try SVG first
+        ctx = IOContext(io, :size => (w, h), :resolution => (w, h), :pt_size => (w, h), :px_per_unit => 1, :full_size => (w, h))
+        
         try
-            Base.invokelatest(show, io, MIME("image/svg+xml"), plot_obj)
+            Base.invokelatest(show, ctx, MIME("image/svg+xml"), plot_obj)
         catch e
             # Fallback to PNG
-            Base.invokelatest(show, io, MIME("image/png"), plot_obj)
+            Base.invokelatest(show, ctx, MIME("image/png"), plot_obj)
         end
         
         raw_data = take!(io)
@@ -127,7 +169,8 @@ function capture_and_send(plot_obj)
              return
         end
         
-        id = string(floor(Int, datetime2unix(now()) * 1000))
+        # Use existing ID if it's a re-render/resize, otherwise generate new one
+        id = isnothing(update_id) ? "j-$(floor(Int, datetime2unix(now()) * 1000))" : string(update_id)
         format = occursin("svg", String(raw_data[1:min(100, end)])) ? "svg" : "png"
         
         metadata = Dict(
@@ -136,26 +179,73 @@ function capture_and_send(plot_obj)
             "format" => format
         )
         
-        # Manage history (keep last 100)
-        push!(plots, metadata)
-        if length(plots) > 100
-            old = popfirst!(plots)
-            delete!(recordings, old["id"])
-            delete!(raw_plots, old["id"])
+        if isnothing(update_id)
+            # New plot: Manage history (keep last 100)
+            push!(plots, metadata)
+            if length(plots) > 100
+                old = popfirst!(plots)
+                delete!(recordings, old["id"])
+                delete!(raw_plots, old["id"])
+            end
+        else
+            # Re-render: update metadata in place to prevent gallery duplication
+            found = false
+            for (i, p) in enumerate(plots)
+                if string(p["id"]) == id
+                    plots[i] = metadata
+                    found = true
+                    break
+                end
+            end
+            if !found
+                push!(plots, metadata) # Müzmin fallback
+            end
         end
         
         recordings[id] = plot_obj
+        
+        # 2. SVG Patching - Force the SVG header to respect our w/h
+        if format == "svg"
+            svg_str = String(copy(raw_data))
+            
+            # 2a. Smart SVG Patching with Aspect Enforcement
+            has_viewbox = occursin(r"viewBox=[\"'][^\"']*[\"']", svg_str)
+            
+            if !has_viewbox
+                m_w = match(r"width=[\"']([\d\.]+)(\w*)[\"']", svg_str)
+                m_h = match(r"height=[\"']([\d\.]+)(\w*)[\"']", svg_str)
+                vw = m_w !== nothing ? m_w.captures[1] : string(w)
+                vh = m_h !== nothing ? m_h.captures[1] : string(h)
+                svg_str = replace(svg_str, r"(<svg)" => SubstitutionString("\\1 viewBox=\"0 0 $(vw) $(vh)\""))
+            end
+            
+            # Now override width/height to requested pixels
+            # Removed preserveAspectRatio="none" to prevent distortion ( PREMIUM FIX )
+            override_attrs = " width=\"$(w)px\" height=\"$(h)px\""
+            
+            # Remove existing W/H/preserveAspectRatio from the start tag
+            svg_str = replace(svg_str, r"(<svg[^>]*?)\s+width=[\"'][^\"']*[\"']" => s"\1")
+            svg_str = replace(svg_str, r"(<svg[^>]*?)\s+height=[\"'][^\"']*[\"']" => s"\1")
+            svg_str = replace(svg_str, r"(<svg[^>]*?)\s+preserveAspectRatio=[\"'][^\"']*[\"']" => s"\1")
+            
+            # Inject new attributes
+            svg_str = replace(svg_str, r"(<svg)" => SubstitutionString("\\1 $(override_attrs)"))
+            
+            raw_data = Vector{UInt8}(svg_str)
+        end
+        
         raw_plots[id] = raw_data
         
-        broadcast_plot(raw_data, metadata)
+        msg_type = isnothing(update_id) ? "new_plot" : "update_plot"
+        broadcast_plot(raw_data, metadata, msg_type)
     catch e
         @warn "R Plot Pro: Error capturing plot" exception=(e, catch_backtrace())
     end
 end
 
-function broadcast_plot(bin_payload, metadata)
+function broadcast_plot(bin_payload, metadata, msg_type="new_plot")
     for (id, ws) in clients
-        send_binary(ws, "new_plot", bin_payload, metadata)
+        send_binary(ws, msg_type, bin_payload, metadata)
     end
 end
 
@@ -203,23 +293,53 @@ function handle_ws_message(ws, msg)
         empty!(recordings)
         empty!(raw_plots)
         last_plot[] = nothing
+    elseif data["type"] == "delete_plot"
+        pid = string(get(data, "plot_id", ""))
+        if !isempty(pid)
+            filter!(p -> string(p["id"]) != pid, plots)
+            delete!(recordings, pid)
+            delete!(raw_plots, pid)
+            # Broadcast updated list to all clients
+            msg = Base.invokelatest(get_json().json, Dict("type" => "plot_list", "plots" => plots))
+            for (cid, ws_client) in clients
+                try
+                    Base.invokelatest(get_http().WebSockets.send, ws_client, msg)
+                catch
+                end
+            end
+        end
     elseif data["type"] == "resize"
-        new_w = Int(data["width"])
-        new_h = Int(data["height"])
+        new_w = round(Int, Float64(data["width"]))
+        new_h = round(Int, Float64(data["height"]))
         
         # Prevent infinite loops: only re-render if dimensions changed meaningfully (> 5px)
         old_w = client_dims[].width
         old_h = client_dims[].height
         
-        if abs(new_w - old_w) > 5 || abs(new_h - old_h) > 5
+        if abs(new_w - old_w) >= 1 || abs(new_h - old_h) >= 1
+            # Language Isolation: Only handle Julia plots with explicit 'j-' prefix
+            pid = get(data, "plot_id", nothing)
+            if isnothing(pid) || !startswith(string(pid), "j-")
+                return
+            end
+            
+            # Terminal Feedback
+            @info "R Plot Pro: Updating Julia plot $(pid) to $(new_w)x$(new_h)..."
+            
             client_dims[] = (width=new_w, height=new_h)
             
-            # Re-render if we have the plot object
-            pid = get(data, "plot_id", nothing)
-            target = isnothing(pid) ? last_plot[] : get(recordings, string(pid), nothing)
+            # Target Selection: 
+            # 1. Try exact match in memory (Fastest)
+            # 2. Fallback to last_plot if ID not found BUT prefix matches 'j-'
+            # This is safe because the Frontend already routed this to OUR port specifically.
+            target = get(recordings, string(pid), nothing)
+            if isnothing(target)
+                target = last_plot[]
+            end
             
             if !isnothing(target)
-                capture_and_send(target)
+                # Keep the requested ID for the update message to ensure frontend consistency
+                capture_and_send(target, pid, new_w, new_h)
             end
         end
     end
@@ -235,9 +355,13 @@ function start_plot_viewer(port=nothing)
     ENV["JULIA_VSCODE_DISPLAY_PLOTS"] = "false"
     
     # Shared config logic
-    config_path = get(ENV, "VSCODE_R_PLOT_CONFIG", "")
-    if isempty(config_path)
-        config_path = joinpath(pwd(), ".r_plot_config.json")
+    env_config_path = get(ENV, "VSCODE_R_PLOT_CONFIG", "")
+    config_file = if isdir(env_config_path)
+        joinpath(env_config_path, "port_$port.json")
+    elseif !isempty(env_config_path)
+        env_config_path
+    else
+        joinpath(pwd(), ".r_plot_config.json")
     end
     
     # Suppress external GR/GKS windows
@@ -248,10 +372,9 @@ function start_plot_viewer(port=nothing)
     end
     
     # Write port to config
-    open(config_path, "w") do f
+    open(config_file, "w") do f
         Base.invokelatest(get_json().print, f, Dict("port" => port))
     end
-    
     
     # Register display and ensure it's at the top
     ensure_display_at_top()
@@ -287,6 +410,16 @@ function start_plot_viewer(port=nothing)
             if !(e isa EOFError)
                 @warn "R Plot Pro: Server error" exception=(e, catch_backtrace())
             end
+        end
+    end
+
+    # Add terminal exit cleanup
+    atexit() do
+        try
+            if isfile(config_file)
+                 rm(config_file, force=true)
+            end
+        catch
         end
     end
     

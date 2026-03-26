@@ -52,20 +52,37 @@ local(
 
         # Process resize request
         handle_resize_request <- function(width, height, plot_id = NULL) {
-            target_plot <- NULL
-            if (!is.null(plot_id)) {
-                pid <- as.character(plot_id)
-                if (!is.null(recordings[[pid]])) {
-                    target_plot <- recordings[[pid]]
-                }
-            }
-            if (is.null(target_plot) && is.null(plot_id)) {
-                target_plot <- last_plot
-            }
-            if (is.null(target_plot)) {
+            # Language Isolation: Only handle R plots with explicit 'r-' prefix
+            if (is.null(plot_id) || !startsWith(as.character(plot_id), "r-")) {
                 return(NULL)
             }
-
+            
+            pid <- as.character(plot_id)
+            if (is.null(recordings[[pid]])) {
+                # Try to match in plots list to find the 'true' key (defensive)
+                for (p in plots) {
+                    if (as.character(p$id) == pid) {
+                        pid <- as.character(p$id)
+                        break
+                    }
+                }
+            }
+            
+            if (!is.null(recordings[[pid]])) {
+                target_plot <- recordings[[pid]]
+            } else {
+                # Fallback to last_plot if ID not found BUT prefix matches 'r-'
+                # Safe because Frontend routes specifically to our port.
+                target_plot <- last_plot
+            }
+            
+            if (!is.null(target_plot)) {
+                capture_and_send(target_plot, width, height, update_id = pid)
+            }
+        }
+        # Capture and send to webview
+        capture_and_send <- function(target_plot, width, height, update_id = NULL) {
+            if (is.null(target_plot)) return(NULL)
             if (width < 50) width <- 50
             if (height < 50) height <- 50
 
@@ -131,45 +148,54 @@ local(
                             plots <<- list()
                             recordings <<- list()
                         } else if (data$type == "delete_plot") {
-                            if (!is.null(data$plot_id)) {
                                 pid <- as.character(data$plot_id)
                                 recordings[[pid]] <<- NULL
+                                raw_plots[[pid]] <<- NULL
                                 plots <<- Filter(
                                     function(x) as.character(x$id) != pid,
                                     plots
                                 )
-                                ws$send(toJSON(
-                                    list(type = "plot_list", plots = plots),
-                                    auto_unbox = TRUE
-                                ))
-                            }
-                        } else if (data$type == "resize") {
-                            client_dims$width <<- data$width
-                            client_dims$height <<- data$height
-                            raw_data <- handle_resize_request(
-                                data$width,
-                                data$height,
-                                data$plot_id
-                            )
-                            if (!is.null(raw_data)) {
-                                if (!is.null(data$plot_id)) {
-                                    pid <- as.character(data$plot_id)
-                                    raw_plots[[pid]] <<- raw_data
+                                # Broadcast updated list to ALL clients
+                                msg <- toJSON(list(type = "plot_list", plots = plots), auto_unbox = TRUE)
+                                for (c in clients) {
+                                    tryCatch(c$send(msg), error = function(e) {})
+                                }
+                            } else if (data$type == "resize") {
+                                w <- as.integer(data$width)
+                                h <- as.integer(data$height)
+                                client_dims$width <<- w
+                                client_dims$height <<- h
+                                
+                                raw_data <- handle_resize_request(w, h, data$plot_id)
+                                
+                                if (!is.null(raw_data)) {
+                                    # Identify which plot was actually rendered
+                                    pid <- if (!is.null(data$plot_id)) as.character(data$plot_id) else NULL
                                     
-                                    # Find format
-                                    fmt <- "svg"
-                                    for (p in plots) {
-                                        if (as.character(p$id) == pid) {
-                                            fmt <- p$format
-                                            break
+                                    # If ID is missing or not in our list, use the latest plot's ID
+                                    if (is.null(pid) || length(plots) == 0) {
+                                        if (length(plots) > 0) pid <- plots[[length(plots)]]$id
+                                    } else {
+                                        # Verify ID exists in plots
+                                        ids <- sapply(plots, function(x) as.character(x$id))
+                                        if (!(pid %in% ids) && length(plots) > 0) {
+                                            pid <- plots[[length(plots)]]$id
                                         }
                                     }
-                                    send_binary_to_client(ws, "update_plot", raw_data, list(id = pid, format = fmt))
-                                } else {
-                                    send_binary_to_client(ws, "update_plot", raw_data, list(format = "svg"))
+                                    
+                                    if (!is.null(pid)) {
+                                        # Find format
+                                        fmt <- "svg"
+                                        for (p in plots) {
+                                            if (as.character(p$id) == pid) {
+                                                fmt <- p$format
+                                                break
+                                            }
+                                        }
+                                        send_binary_to_client(ws, "update_plot", raw_data, list(id = pid, format = fmt))
+                                    }
                                 }
-                            }
-                        } else if (data$type == "set_active_file") {
+                            } else if (data$type == "set_active_file") {
                             # Functionality removed as per cleanup
                         }
                     },
@@ -272,7 +298,7 @@ local(
                     }
                     
                     raw_data <- readBin(temp_file, "raw", fsize)
-                    id <- as.character(as.numeric(Sys.time()) * 1000)
+                    id <- sprintf("r-%.0f", as.numeric(Sys.time()) * 1000)
 
                     # Determine source code information
                     source_info <- NULL
@@ -367,7 +393,11 @@ local(
 
             env_config_path <- Sys.getenv("VSCODE_R_PLOT_CONFIG")
             local_config_file <- if (nzchar(env_config_path)) {
-                env_config_path
+                if (isTRUE(file.info(env_config_path)$isdir)) {
+                    file.path(env_config_path, paste0("port_", port, ".json"))
+                } else {
+                    env_config_path
+                }
             } else {
                 file.path(getwd(), ".r_plot_config.json")
             }
@@ -376,6 +406,11 @@ local(
                 jsonlite::toJSON(list(port = port), auto_unbox = TRUE),
                 local_config_file
             )
+
+            # Register cleanup
+            reg.finalizer(parent.frame(), function(e) {
+                if (file.exists(local_config_file)) unlink(local_config_file)
+            }, onexit = TRUE)
 
             tryCatch(
                 {

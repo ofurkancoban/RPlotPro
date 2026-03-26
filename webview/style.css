@@ -256,13 +256,22 @@ button.icon-btn svg[fill="currentColor"] {
 }
 
 .plot-item img {
-    width: 115px;
-    height: 75px;
-    object-fit: contain;
+    width: 115px !important;
+    height: 75px !important;
+    object-fit: contain !important;
     border: 1px solid var(--border-color);
     margin-bottom: 4px;
     display: block;
     border-radius: 3px;
+    /* Reset any transitions/filters that might leak from main view */
+    transition: opacity 0.2s ease;
+    filter: none !important;
+    opacity: 1 !important;
+}
+
+.plot-item img.lazy-thumb {
+    width: 115px !important;
+    height: 75px !important;
 }
 
 /* Thumbnail footer with two columns */
@@ -562,9 +571,12 @@ button.icon-btn svg[fill="currentColor"] {
     display: inline-block;
     /* margin handled by JS dynamically */
     flex-shrink: 0;
-    transition: transform 0.3s ease, width 0.3s ease, height 0.3s ease;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+                width 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+                height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     transform-origin: center center;
     overflow: hidden;
+    will-change: width, height, transform;
 }
 
 .media-wrapper img, .media-wrapper .annotation-layer {
@@ -577,8 +589,13 @@ button.icon-btn svg[fill="currentColor"] {
 
 .media-wrapper img {
     /* object-fit handled by JS calculations and .has-aspect class */
-    transition: filter 0.3s ease;
+    transition: opacity 0.2s ease-in-out, filter 0.3s ease;
     z-index: 1;
+    opacity: 1;
+}
+
+.media-wrapper img.changing {
+    opacity: 0.4;
 }
 
 .media-wrapper .annotation-layer {
@@ -831,10 +848,12 @@ body.is-annotating .annotation-layer {
 
 .draw-palette {
     position: absolute;
-    top: 20px;
-    left: 20px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
+    top: 40px;
+    left: 40px;
+    background: rgba(30, 30, 30, 0.4); 
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 10px; 
     display: flex;
     flex-direction: column;
@@ -842,7 +861,6 @@ body.is-annotating .annotation-layer {
     gap: 0;
     z-index: 1000;
     box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    /* Restore smooth transition for the container */
     transition: 
         left 0s linear, 
         top 0s linear, 
@@ -852,21 +870,17 @@ body.is-annotating .annotation-layer {
         gap 0.3s ease-in-out,
         border-radius 0.3s ease-in-out,
         opacity 0.2s ease-in-out;
-    /* We handle the 2s pull-back delay on the non-hover state explicitly now */
     user-select: none;
     transform-origin: top left; 
     overflow: hidden;
     width: auto;
     height: auto;
-    /* Compact mode: Matching tools (32px) + padding (4px * 2) = 40px */
-    min-width: 40px;
-    min-height: 40px;
-    max-width: 40px;
-    max-height: 40px;
+    min-width: 34px;
+    min-height: 34px;
+    max-width: 34px;
+    max-height: 34px;
     justify-content: center;
     align-items: center;
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .draw-palette.no-transition,
@@ -876,20 +890,20 @@ body.is-annotating .annotation-layer {
 
 .draw-palette.is-dragging,
 .draw-palette.is-switching {
-    max-width: 40px; /* Lock width for vertical expansion */
+    max-width: 34px; /* Lock width for vertical expansion */
     max-height: 500px;
     border-radius: 10px;
-    gap: 4px;
-    padding: 4px;
+    gap: 2px;
+    padding: 3px;
     justify-content: flex-start;
 }
 
 .draw-palette:hover {
-    max-width: 40px; /* Lock width for vertical expansion */
+    max-width: 34px; /* Lock width for vertical expansion */
     max-height: 500px;
     border-radius: 10px;
-    gap: 4px;
-    padding: 4px;
+    gap: 2px;
+    padding: 3px;
     justify-content: flex-start;
     transition-delay: 0s !important;
 }
@@ -898,7 +912,7 @@ body.is-annotating .annotation-layer {
 .draw-palette.palette-horizontal.is-switching,
 .draw-palette.palette-horizontal:hover {
     max-width: 500px;
-    max-height: 40px; /* Lock height for horizontal expansion */
+    max-height: 34px; /* Lock height for horizontal expansion */
 }
 
 /* Ensure the pull-back (collapse) has the 2s delay */
@@ -948,8 +962,8 @@ body.is-annotating .annotation-layer {
 }
 
 .palette-horizontal .palette-handle {
-    width: 12px;
-    height: 32px;
+    width: 10px;
+    height: 28px;
     margin-right: 0;
 }
 
@@ -968,8 +982,8 @@ body.is-annotating .annotation-layer {
 }
 
 .tool-btn {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     border: none;
     background: transparent;
     color: var(--text-secondary);
@@ -1032,13 +1046,13 @@ body.is-annotating .annotation-layer {
 .palette-horizontal .palette-sep {
     height: 24px;
     width: 1px;
-    margin: 0 4px;
+    margin: 0 2px;
 }
 
 .color-picker {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
     align-items: flex-start;
     justify-content: flex-start;
     max-width: 300px;
@@ -1070,12 +1084,18 @@ body.is-annotating .annotation-layer {
     flex-direction: row;
 }
 
+.color-swatch-custom-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
 .color-swatch {
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     cursor: pointer;
-    border: 2px solid transparent;
+    border: 2px solid white;
     transition: transform 0.2s, opacity 0.2s ease-in-out;
     flex-shrink: 0;
 }

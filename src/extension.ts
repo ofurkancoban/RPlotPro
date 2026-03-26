@@ -57,9 +57,9 @@ export function activate(context: vscode.ExtensionContext) {
             // Forward messages from panel to handle export/config same way
             panel.webview.onDidReceiveMessage(message => {
                 if (message.command === 'request_config') {
-                    const port = plotProvider.getPort();
-                    if (port) {
-                        panel.webview.postMessage({ command: 'set_port', port: port });
+                    const ports = plotProvider.getPorts();
+                    if (ports.length > 0) {
+                        panel.webview.postMessage({ command: 'set_ports', ports: ports });
                     }
                 } else if (message.command === 'open_new_window') {
                     vscode.commands.executeCommand('rPlotViewer.openGallery');
@@ -87,10 +87,10 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             });
 
-            // Proactively send current port if available
-            const port = plotProvider.getPort();
-            if (port) {
-                panel.webview.postMessage({ command: 'set_port', port: port });
+            // Proactively send current ports if available
+            const ports = plotProvider.getPorts();
+            if (ports.length > 0) {
+                panel.webview.postMessage({ command: 'set_ports', ports: ports });
             }
         })
     );
@@ -103,69 +103,63 @@ export function activate(context: vscode.ExtensionContext) {
         context.workspaceState.update(configIdKey, configId);
     }
 
-    const uniqueConfigPath = path.join(os.tmpdir(), `${configId}.json`);
+    const uniqueConfigDir = path.join(os.tmpdir(), configId);
+    if (!fs.existsSync(uniqueConfigDir)) {
+        fs.mkdirSync(uniqueConfigDir, { recursive: true });
+    }
+
     const initRPath = path.join(context.extensionPath, 'init.R');
     const normalizedInitPath = initRPath.replace(/\\/g, '/');
     const initJlPath = path.join(context.extensionPath, 'init.jl');
     const normalizedJlPath = initJlPath.replace(/\\/g, '/');
 
-    context.environmentVariableCollection.replace('VSCODE_R_PLOT_CONFIG', uniqueConfigPath);
+    context.environmentVariableCollection.replace('VSCODE_R_PLOT_CONFIG', uniqueConfigDir);
     context.environmentVariableCollection.replace('VSC_R_PLOT_INIT', normalizedInitPath);
     context.environmentVariableCollection.replace('VSC_JL_PLOT_INIT', normalizedJlPath);
 
-    plotProvider.setSessionConfigPath(uniqueConfigPath);
+    plotProvider.setSessionConfigPath(uniqueConfigDir);
 
-    const tryReadConfig = (configPath: string) => {
+    const discoverPorts = (configDir: string) => {
         try {
-            if (fs.existsSync(configPath)) {
-                const content = fs.readFileSync(configPath, 'utf8');
-                const config = JSON.parse(content);
-                if (config.port) {
-                    plotProvider.postMessage({ command: 'set_port', port: config.port });
+            if (fs.existsSync(configDir) && fs.statSync(configDir).isDirectory()) {
+                const files = fs.readdirSync(configDir);
+                const ports: number[] = [];
+                for (const file of files) {
+                    if (file.endsWith('.json')) {
+                        try {
+                            const content = fs.readFileSync(path.join(configDir, file), 'utf8');
+                            const config = JSON.parse(content);
+                            if (config.port) ports.push(config.port);
+                        } catch (e) { /* skip malformed */ }
+                    }
+                }
+                if (ports.length > 0) {
+                    plotProvider.postMessage({ command: 'set_ports', ports: ports });
                 }
             }
         } catch (e) {
-            console.error('Error reading plot config update:', e);
+            console.error('Error discovering plot ports:', e);
         }
     };
 
     // Initial check
-    setTimeout(() => tryReadConfig(uniqueConfigPath), 500);
+    setTimeout(() => discoverPorts(uniqueConfigDir), 500);
 
-    // Watch the temp config file for changes (Event-driven)
+    // Watch the temp config directory for changes
     try {
-        const tempDir = path.dirname(uniqueConfigPath);
-        const configFilename = path.basename(uniqueConfigPath);
-        
-        const fsWatcher = fs.watch(tempDir, (_eventType, filename) => {
-            if (filename === configFilename) {
-                tryReadConfig(uniqueConfigPath);
-            }
+        const fsWatcher = fs.watch(uniqueConfigDir, (_eventType, _filename) => {
+            discoverPorts(uniqueConfigDir);
         });
         context.subscriptions.push({ dispose: () => fsWatcher.close() });
     } catch (e) {
         console.error('Failed to watch temp config dir:', e);
-        // Fallback to minimal polling only if watcher fails
-        const fallbackInterval = setInterval(() => tryReadConfig(uniqueConfigPath), 5000);
+        // Fallback to minimal polling
+        const fallbackInterval = setInterval(() => discoverPorts(uniqueConfigDir), 5000);
         context.subscriptions.push({ dispose: () => clearInterval(fallbackInterval) });
     }
 
-    if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-        const legacyWatcher = vscode.workspace.createFileSystemWatcher(
-            new vscode.RelativePattern(vscode.workspace.workspaceFolders[0], '.r_plot_config.json')
-        );
-        legacyWatcher.onDidChange(() => {
-            if (!fs.existsSync(uniqueConfigPath)) {
-                tryReadConfig(path.join(vscode.workspace.workspaceFolders![0].uri.fsPath, '.r_plot_config.json'));
-            }
-        });
-        legacyWatcher.onDidCreate(() => {
-            if (!fs.existsSync(uniqueConfigPath)) {
-                tryReadConfig(path.join(vscode.workspace.workspaceFolders![0].uri.fsPath, '.r_plot_config.json'));
-            }
-        });
-        context.subscriptions.push(legacyWatcher);
-    }
+    // Legacy check removed as we moved to directory-based discovery
+    // and session-specific isolation.
 
     const config = vscode.workspace.getConfiguration('rPlotViewer');
     const autoAttach = config.get('autoAttach', true);
@@ -311,41 +305,47 @@ class PlotViewProvider implements vscode.WebviewViewProvider {
 
     private checkAndSendConfig() {
         try {
-            if (this.sessionConfigPath && fs.existsSync(this.sessionConfigPath)) {
-                const content = fs.readFileSync(this.sessionConfigPath, 'utf8');
-                const config = JSON.parse(content);
-                if (config.port) {
-                    this.postMessage({ command: 'set_port', port: config.port });
-                    return;
-                }
-            }
-
-            if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-                const configPath = path.join(vscode.workspace.workspaceFolders[0].uri.fsPath, '.r_plot_config.json');
-                if (fs.existsSync(configPath)) {
-                    const content = fs.readFileSync(configPath, 'utf8');
-                    const config = JSON.parse(content);
-                    if (config.port) {
-                        this.postMessage({ command: 'set_port', port: config.port });
+            if (this.sessionConfigPath && fs.existsSync(this.sessionConfigPath) && fs.statSync(this.sessionConfigPath).isDirectory()) {
+                const files = fs.readdirSync(this.sessionConfigPath);
+                const ports: number[] = [];
+                for (const file of files) {
+                    if (file.endsWith('.json')) {
+                        try {
+                            const content = fs.readFileSync(path.join(this.sessionConfigPath, file), 'utf8');
+                            const config = JSON.parse(content);
+                            if (config.port) ports.push(config.port);
+                        } catch (e) { /* skip */ }
                     }
+                }
+                if (ports.length > 0) {
+                    this.postMessage({ command: 'set_ports', ports: ports });
                 }
             }
         } catch (e) {
-            console.error('Error reading plot config on request:', e);
+            console.error('Error reading plot ports on request:', e);
         }
     }
 
-    public getPort(): number | undefined {
+    public getPorts(): number[] {
         try {
-            if (this.sessionConfigPath && fs.existsSync(this.sessionConfigPath)) {
-                const content = fs.readFileSync(this.sessionConfigPath, 'utf8');
-                const config = JSON.parse(content);
-                return config.port;
+            if (this.sessionConfigPath && fs.existsSync(this.sessionConfigPath) && fs.statSync(this.sessionConfigPath).isDirectory()) {
+                const files = fs.readdirSync(this.sessionConfigPath);
+                const ports: number[] = [];
+                for (const file of files) {
+                    if (file.endsWith('.json')) {
+                        try {
+                            const content = fs.readFileSync(path.join(this.sessionConfigPath, file), 'utf8');
+                            const config = JSON.parse(content);
+                            if (config.port) ports.push(config.port);
+                        } catch (e) { /* skip */ }
+                    }
+                }
+                return ports;
             }
         } catch (e) {
-            console.error('Error reading port:', e);
+            console.error('Error reading ports:', e);
         }
-        return undefined;
+        return [];
     }
 
     public postMessage(message: any) {

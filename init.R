@@ -3,7 +3,7 @@
 
 # Stealth mode: Clear up to 6 lines of 'source(...)' command (Nuclear Stealth)
 if (interactive()) {
-    cat("\033[A\033[2K\033[A\033[2K\033[A\033[2K\033[A\033[2K\033[A\033[2K\033[A\033[2K\r", sep = "")
+    cat("\033[A\033[2K\033[A\033[2K\033[A\r\033[2C\033[K\r", sep = "")
 }
 
 local({

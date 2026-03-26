@@ -20,12 +20,13 @@ let lastCanvasData = new Map(); // Store base64 canvas data per plot ID
 // Annotation State
 let isAnnotating = false;
 let currentTool = 'pencil';
-let currentColor = '#ff4757';
+let currentColor = '#ffffff';
 let isDrawing = false;
 let activeCanvas = null;
 let activeCtx = null;
 let activePane = 'left';
-let paletteState = state.palette || { x: 20, y: 20, isHorizontal: true };
+let paletteState = state.palette || { x: 40, y: 40, isHorizontal: true };
+let annotationHistory = new Map(); // Map<pid, { undo: string[], redo: string[] }>
 
 // Rehydrate annotations if available
 if (state.annotations) {
@@ -58,6 +59,9 @@ function getScaleFromClass(target) {
 }
 
 function updatePlotDimensions(wrapperId) {
+    const previewWrappers = ['mainMediaWrapper', 'leftMediaWrapper', 'rightMediaWrapper'];
+    if (!previewWrappers.includes(wrapperId)) return;
+    
     const wrapper = document.getElementById(wrapperId);
     if (!wrapper) return;
     const container = wrapper.parentElement;
@@ -147,10 +151,15 @@ function updatePlotDimensions(wrapperId) {
             if (sh > ch_actual) container.scrollTop = (sh - ch_actual) / 2;
             
             attempts++;
-            if (attempts < 10) {
+            if (attempts < 15) {
                 requestAnimationFrame(doCenter);
             } else {
                 wrapper.style.visibility = 'visible';
+                // Final cleanup frame after CSS transition (0.3s)
+                setTimeout(() => {
+                    if (sw > cw_actual) container.scrollLeft = (sw - cw_actual) / 2;
+                    if (sh > ch_actual) container.scrollTop = (sh - ch_actual) / 2;
+                }, 350);
             }
         };
         requestAnimationFrame(doCenter);
@@ -181,20 +190,15 @@ function logToUI(msg) {
 window.addEventListener('message', event => {
     const message = event.data;
     switch (message.command) {
-        case 'set_port':
-            if (currentPort !== message.port) {
-                currentPort = message.port;
-                connectWebSocket();
-            }
+        case 'set_ports':
+            updateConnections(message.ports);
             break;
         case 'set_active_file':
-            // Forward to R backend
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ 
-                    type: 'set_active_file', 
-                    filePath: message.filePath 
-                }));
-            }
+            // Broadcast to all active backends
+            broadcastToBackends({ 
+                type: 'set_active_file', 
+                filePath: message.filePath 
+            });
             break;
         case 'store_active_file':
             // Store in state for WebSocket reconnection
@@ -220,76 +224,114 @@ function debounce(func, wait) {
     };
 }
 
-function connectWebSocket() {
-    if (!currentPort) return; // Wait for port
+const activeSockets = new Map(); // port -> WebSocket
 
-    if (ws) {
-        try { ws.close(); } catch(e) {}
-        ws = null;
+function updateConnections(ports) {
+    if (!ports) return;
+
+    // 1. Close connections for ports no longer in the list
+    for (const [port, socket] of activeSockets) {
+        if (!ports.includes(Number(port))) {
+            log(`Closing connection to port ${port}`);
+            socket.close();
+            activeSockets.delete(port);
+        }
     }
-    if (reconnectTimer) clearTimeout(reconnectTimer);
+    
+    // 2. Open connections for new ports
+    for (const port of ports) {
+        if (!activeSockets.has(Number(port))) {
+            connectToPort(Number(port));
+        }
+    }
+    
+    updateConnectionStatus(activeSockets.size > 0);
+}
 
-    const url = 'ws://127.0.0.1:' + currentPort;
+function broadcastToBackends(data, targetPort = null) {
+    const msg = typeof data === 'string' ? data : JSON.stringify(data);
+    
+    // Targeted routing if port is known
+    if (targetPort && activeSockets.has(Number(targetPort))) {
+        const socket = activeSockets.get(Number(targetPort));
+        if (socket.readyState === WebSocket.OPEN) {
+            socket.send(msg);
+            return;
+        }
+    }
+    
+    // Fallback: Broadcast to all active backends
+    for (const socket of activeSockets.values()) {
+        if (socket.readyState === WebSocket.OPEN) {
+            socket.send(msg);
+        }
+    }
+}
+
+function connectToPort(port) {
+    const url = 'ws://127.0.0.1:' + port;
+    log(`Connecting to ${url}...`);
     
     try {
-        ws = new WebSocket(url);
-        ws.binaryType = 'arraybuffer';
+        const socket = new WebSocket(url);
+        socket.binaryType = 'arraybuffer';
         let heartbeat;
+        let p = port;
 
-        ws.onopen = () => {
-            log('Connected');
+        socket.onopen = () => {
+            log(`Connected to port ${p}`);
+            activeSockets.set(p, socket);
             updateConnectionStatus(true);
-            ws.send(JSON.stringify({ type: 'get_plots' }));
+            socket.send(JSON.stringify({ type: 'get_plots' }));
             
-            // Heartbeat to keep connection alive and detect drops
+            // Heartbeat
             heartbeat = setInterval(() => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ type: 'ping' }));
+                if (socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({ type: 'ping' }));
                 }
             }, 30000);
 
-            // Send active file info after connection established
             const activeFile = (vscode.getState() || {}).activeFile;
             if (activeFile) {
-                ws.send(JSON.stringify({ 
+                socket.send(JSON.stringify({ 
                     type: 'set_active_file', 
                     filePath: activeFile 
                 }));
             }
             
-            // Initial resize after small delay to ensure layout is ready
-            setTimeout(() => { refreshLayout(); sendResizeEvent(); }, 100);
+            setTimeout(() => { refreshLayout(); sendResizeEvent(); }, 150);
         };
-        ws.onclose = () => {
+
+        socket.onclose = () => {
             if (heartbeat) clearInterval(heartbeat);
-            updateConnectionStatus(false);
-            reconnectTimer = setTimeout(() => {
-                 vscode.postMessage({ command: 'request_config' });
-                connectWebSocket();
-            }, 2000);
+            activeSockets.delete(p);
+            updateConnectionStatus(activeSockets.size > 0);
+            log(`Closed port ${p}`);
         };
-        ws.onerror = (e) => {
-             if (heartbeat) clearInterval(heartbeat);
-             updateConnectionStatus(false);
+
+        socket.onerror = (e) => {
+            if (heartbeat) clearInterval(heartbeat);
+            activeSockets.delete(p);
+            updateConnectionStatus(activeSockets.size > 0);
         };
-        ws.onmessage = (event) => {
+
+        socket.onmessage = (event) => {
             if (typeof event.data === 'string') {
                 try {
                     const data = JSON.parse(event.data);
                     if (data.type === 'pong') return;
-                    handleMessage(data);
+                    handleMessage(data, p);
                 } catch (e) {}
             } else {
-                // Handle binary frame
-                handleBinaryMessage(event.data);
+                handleBinaryMessage(event.data, p);
             }
         };
     } catch (e) {
-        reconnectTimer = setTimeout(connectWebSocket, 2000);
+        log(`Failed connection to ${port}: ${e.message}`);
     }
 }
 
-function handleBinaryMessage(buffer) {
+function handleBinaryMessage(buffer, port) {
     try {
         log(`Binary Data Received: ${buffer.byteLength} bytes`);
         
@@ -338,9 +380,9 @@ function handleBinaryMessage(buffer) {
         if (pid) plotUrls.set(pid, url);
         
         if (metadata.type === 'new_plot') {
-            addPlot(url, metadata);
+            addPlot(url, metadata, port);
         } else {
-            updateCurrentPlot(pid, url);
+            updateCurrentPlot(pid, url, port);
         }
     } catch (e) {
         log('CRITICAL ERROR: ' + e);
@@ -357,7 +399,7 @@ function initThumbObserver() {
                     const img = entry.target;
                     const pid = img.getAttribute('data-id');
                     if (pid && !plotUrls.has(pid)) {
-                        ws.send(JSON.stringify({ type: 'request_binary', plot_id: pid }));
+                        broadcastToBackends({ type: 'request_binary', plot_id: pid });
                     }
                     thumbObserver.unobserve(img);
                 }
@@ -416,12 +458,12 @@ function initThumbObserver() {
     });
 })();
 
-function handleMessage(data) {
+function handleMessage(data, port) {
     switch (data.type) {
-        case 'new_plot': addPlot(data.data, data.metadata); break;
+        case 'new_plot': addPlot(data.data, data.metadata, port); break;
         case 'update_plot': 
             // This is likely legacy or fallback, but let's fix the signature
-            if (data.id && data.data) updateCurrentPlot(data.id, data.data); 
+            if (data.id && data.data) updateCurrentPlot(data.id, data.data, port); 
             break;
         case 'clear_plots': clearLocalPlots(); break;
         case 'plot_list': 
@@ -442,7 +484,7 @@ function handleMessage(data) {
             });
             
             // Merge: use server data but restore client metadata if ID matches
-            plots = serverPlots.map(serverPlot => {
+            const incomingPlots = serverPlots.map(serverPlot => {
                 const savedMetadata = savedMetadataMap.get(serverPlot.id);
                 return {
                     ...serverPlot,
@@ -451,6 +493,11 @@ function handleMessage(data) {
                     isFavorite: savedMetadata?.isFavorite || false
                 };
             });
+            
+            // Multi-terminal stability: Replace ONLY plots from THIS port
+            const otherPlots = plots.filter(p => p.port && p.port !== port);
+            const taggedIncoming = incomingPlots.map(np => ({ ...np, port }));
+            plots = [...otherPlots, ...taggedIncoming].sort((a,b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0));
             
             rehydratePlots();
             break;
@@ -601,15 +648,25 @@ function updateConnectionStatus(connected) {
 }
 
 
-function addPlot(plotUrl, metadata = {}) {
+function addPlot(plotUrl, metadata = {}, port) {
     const pid = metadata.id ? String(metadata.id) : String(Date.now());
+    
+    // Deduplication check: if plot already exists, treat as update
+    const existingIdx = plots.findIndex(p => String(p.id) === pid);
+    if (existingIdx >= 0) {
+        log(`Idempotent addPlot: Updating existing plot ${pid}`);
+        updateCurrentPlot(pid, plotUrl, port);
+        return;
+    }
+    
     const plot = {
         id: pid,
         data: plotUrl,
         format: metadata.format || 'svg',
         timestamp: metadata.timestamp || new Date().toLocaleTimeString(),
         note: metadata.note || '',
-        isFavorite: metadata.isFavorite || false
+        isFavorite: metadata.isFavorite || false,
+        port: Number(port)
     };
     plots.push(plot);
     currentIndex = plots.length - 1;
@@ -618,25 +675,32 @@ function addPlot(plotUrl, metadata = {}) {
     showPlot(currentIndex, true);
 }
 
-function updateCurrentPlot(plotId, plotUrl) {
+function updateCurrentPlot(plotId, plotUrl, port) {
     const pid = String(plotId);
     const index = plots.findIndex(p => String(p.id) === pid);
     if (index >= 0) {
         plots[index].data = plotUrl;
+        if (port) plots[index].port = Number(port);
         
-        // Update main view
         if (!isSplitMode && index === currentIndex) {
             const plotImage = document.getElementById('plotImage');
             const wrapper = document.getElementById('mainMediaWrapper');
             if (plotImage) {
-                plotImage.src = plotUrl;
-                plotImage.style.display = 'block';
-                if (wrapper) {
-                    wrapper.style.display = 'inline-block';
-                    updatePlotDimensions('mainMediaWrapper');
-                }
-                document.getElementById('emptyState').style.display = 'none';
-                restoreAnnotation(pid, 'annotationCanvas');
+                // Preload and swap
+                plotImage.classList.add('changing');
+                const tempImg = new Image();
+                tempImg.onload = () => {
+                    plotImage.src = plotUrl;
+                    plotImage.classList.remove('changing');
+                    plotImage.style.display = 'block';
+                    if (wrapper) {
+                        wrapper.style.display = 'inline-block';
+                        updatePlotDimensions('mainMediaWrapper');
+                    }
+                    document.getElementById('emptyState').style.display = 'none';
+                    restoreAnnotation(pid, 'annotationCanvas');
+                };
+                tempImg.src = plotUrl;
             }
         }
         
@@ -646,26 +710,38 @@ function updateCurrentPlot(plotId, plotUrl) {
                 const leftPlot = document.getElementById('leftPlot');
                 const leftWrapper = document.getElementById('leftMediaWrapper');
                 if (leftPlot) {
-                    leftPlot.src = plotUrl;
-                    if (leftWrapper) {
-                        leftWrapper.style.display = 'inline-block';
-                        updatePlotDimensions('leftMediaWrapper');
-                    }
-                    document.getElementById('emptyState').style.display = 'none';
-                    restoreAnnotation(pid, 'leftAnnotationCanvas');
+                    leftPlot.classList.add('changing');
+                    const tempImg = new Image();
+                    tempImg.onload = () => {
+                        leftPlot.src = plotUrl;
+                        leftPlot.classList.remove('changing');
+                        if (leftWrapper) {
+                            leftWrapper.style.display = 'inline-block';
+                            updatePlotDimensions('leftMediaWrapper');
+                        }
+                        document.getElementById('emptyState').style.display = 'none';
+                        restoreAnnotation(pid, 'leftAnnotationCanvas');
+                    };
+                    tempImg.src = plotUrl;
                 }
             }
             if (index === rightIndex) {
                 const rightPlot = document.getElementById('rightPlot');
                 const rightWrapper = document.getElementById('rightMediaWrapper');
                 if (rightPlot) {
-                    rightPlot.src = plotUrl;
-                    if (rightWrapper) {
-                        rightWrapper.style.display = 'inline-block';
-                        updatePlotDimensions('rightMediaWrapper');
-                    }
-                    document.getElementById('emptyState').style.display = 'none';
-                    restoreAnnotation(pid, 'rightAnnotationCanvas');
+                    rightPlot.classList.add('changing');
+                    const tempImg = new Image();
+                    tempImg.onload = () => {
+                        rightPlot.src = plotUrl;
+                        rightPlot.classList.remove('changing');
+                        if (rightWrapper) {
+                            rightWrapper.style.display = 'inline-block';
+                            updatePlotDimensions('rightMediaWrapper');
+                        }
+                        document.getElementById('emptyState').style.display = 'none';
+                        restoreAnnotation(pid, 'rightAnnotationCanvas');
+                    };
+                    tempImg.src = plotUrl;
                 }
             }
         }
@@ -680,6 +756,15 @@ function updateCurrentPlot(plotId, plotUrl) {
 function clearLocalPlots() {
     plots = [];
     currentIndex = -1;
+    leftIndex = -1;
+    rightIndex = -1;
+    
+    // Clear stored annotations
+    lastCanvasData.clear();
+    
+    // Revoke all Object URLs
+    plotUrls.forEach(url => URL.revokeObjectURL(url));
+    plotUrls.clear();
     
     // Reset split mode if active
     if (isSplitMode) {
@@ -687,27 +772,48 @@ function clearLocalPlots() {
         document.body.classList.remove('is-split-mode');
         const splitBtn = document.getElementById('splitBtn');
         if (splitBtn) splitBtn.classList.remove('split-active-btn');
-        
-        const splitContainer = document.getElementById('splitViewContainer');
-        const mainWrapper = document.getElementById('mainMediaWrapper');
-        if (splitContainer) splitContainer.style.display = 'none';
-        if (mainWrapper) mainWrapper.style.display = 'inline-flex';
     }
     
-    // Revoke all Object URLs
-    plotUrls.forEach(url => URL.revokeObjectURL(url));
-    plotUrls.clear();
+    // Hide all wrappers and clear canvases
+    const wrappers = ['mainMediaWrapper', 'leftMediaWrapper', 'rightMediaWrapper'];
+    const canvases = ['annotationCanvas', 'leftAnnotationCanvas', 'rightAnnotationCanvas'];
     
-    vscode.setState({ ...vscode.getState(), currentIndex: -1, plots: [], isSplitMode: false });
+    wrappers.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+    
+    canvases.forEach(id => {
+        const c = document.getElementById(id);
+        if (c) {
+            const ctx = c.getContext('2d');
+            if (ctx) ctx.clearRect(0, 0, c.width, c.height);
+        }
+    });
     
     const plotImage = document.getElementById('plotImage');
     if (plotImage) plotImage.style.display = 'none';
     
     const emptyState = document.getElementById('emptyState');
     if (emptyState) emptyState.style.display = 'block';
+
+    const splitContainer = document.getElementById('splitViewContainer');
+    if (splitContainer) splitContainer.style.display = 'none';
+
+    // Update state to remove annotations and reset indices
+    vscode.setState({ 
+        ...vscode.getState(), 
+        currentIndex: -1, 
+        plots: [], 
+        isSplitMode: false,
+        leftIndex: -1,
+        rightIndex: -1,
+        annotations: undefined
+    });
     
     updatePlotList();
     updateControls();
+    saveState();
 }
 
 // Delete Handler
@@ -715,9 +821,45 @@ function deletePlot(index, event) {
     if (event) event.stopPropagation();
     if (index < 0 || index >= plots.length) return;
     
-    const pid = plots[index].id;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'delete_plot', plot_id: pid }));
+    const plot = plots[index];
+    const pid = plot.id;
+    
+    log(`Optimistic delete: Plot ${pid} (index ${index})`);
+
+    // 1. Broadcast to backends
+    broadcastToBackends({ type: 'delete_plot', plot_id: pid });
+    
+    // 2. Optimistic local removal
+    plots.splice(index, 1);
+    
+    // 3. Resource cleanup
+    if (plotUrls.has(pid)) {
+        URL.revokeObjectURL(plotUrls.get(pid));
+        plotUrls.delete(pid);
+    }
+    lastCanvasData.delete(pid);
+    
+    // 4. Adjust Indices
+    if (currentIndex === index) {
+        currentIndex = plots.length > 0 ? Math.max(0, index - 1) : -1;
+    } else if (currentIndex > index) {
+        currentIndex--;
+    }
+    
+    if (leftIndex === index) leftIndex = -1;
+    else if (leftIndex > index) leftIndex--;
+    
+    if (rightIndex === index) rightIndex = -1;
+    else if (rightIndex > index) rightIndex--;
+
+    // 5. Update state and UI
+    saveState();
+    updatePlotList();
+    
+    if (plots.length > 0) {
+        showPlot(currentIndex, false);
+    } else {
+        clearLocalPlots();
     }
 }
 
@@ -829,29 +971,43 @@ function showPlot(index, shouldScroll = true) {
         if (isSplitMode) {
             const paneImg = document.getElementById(activePane + 'Plot');
             const wrapper = document.getElementById(activePane + 'MediaWrapper');
-            if (paneImg) paneImg.src = plotUrl;
-            if (wrapper) {
-                wrapper.style.display = 'inline-block';
-                updatePlotDimensions(activePane + 'MediaWrapper');
+            if (paneImg) {
+                paneImg.classList.add('changing');
+                const tempImg = new Image();
+                tempImg.onload = () => {
+                    paneImg.src = plotUrl;
+                    paneImg.classList.remove('changing');
+                    if (wrapper) {
+                        wrapper.style.display = 'inline-block';
+                        updatePlotDimensions(activePane + 'MediaWrapper');
+                    }
+                    document.getElementById('emptyState').style.display = 'none';
+                    restoreAnnotation(pid, activePane + 'AnnotationCanvas');
+                };
+                tempImg.src = plotUrl;
             }
-            document.getElementById('emptyState').style.display = 'none';
-            restoreAnnotation(pid, activePane + 'AnnotationCanvas');
         } else {
             const plotImage = document.getElementById('plotImage');
             const wrapper = document.getElementById('mainMediaWrapper');
             if (plotImage) {
-                plotImage.src = plotUrl;
-                plotImage.style.display = 'block';
-                if (wrapper) {
-                    wrapper.style.display = 'inline-block';
-                    updatePlotDimensions('mainMediaWrapper');
-                }
-                document.getElementById('emptyState').style.display = 'none';
-                restoreAnnotation(pid, 'annotationCanvas');
+                plotImage.classList.add('changing');
+                const tempImg = new Image();
+                tempImg.onload = () => {
+                    plotImage.src = plotUrl;
+                    plotImage.classList.remove('changing');
+                    plotImage.style.display = 'block';
+                    if (wrapper) {
+                        wrapper.style.display = 'inline-block';
+                        updatePlotDimensions('mainMediaWrapper');
+                    }
+                    document.getElementById('emptyState').style.display = 'none';
+                    restoreAnnotation(pid, 'annotationCanvas');
+                };
+                tempImg.src = plotUrl;
             }
         }
     } else {
-        ws.send(JSON.stringify({ type: 'request_binary', plot_id: pid }));
+        broadcastToBackends({ type: 'request_binary', plot_id: pid });
     }
     
     updateControls();
@@ -947,6 +1103,8 @@ function toggleZoom() {
             restoreAnnotation(pid, activeCanvas.id);
         }
     }
+    // Sync with backend for high-quality re-render if zoom affects perceived size
+    setTimeout(() => sendResizeEvent(), 50);
 }
 
 function toggleAspectRatio() {
@@ -967,16 +1125,11 @@ function toggleAspectRatio() {
     target.classList.remove('aspect-auto', 'aspect-square', 'aspect-landscape', 'aspect-portrait', 'aspect-fill');
     target.classList.add('aspect-' + newAspect);
     
-    target.classList.toggle('has-aspect', newAspect !== 'auto' && newAspect !== 'fill');
-    
     updatePlotDimensions(wrapperId);
     
     // Manage .has-aspect class for CSS targeting
-    if (newAspect === 'auto' || newAspect === 'fill') {
-        target.classList.remove('has-aspect');
-    } else {
-        target.classList.add('has-aspect');
-    }
+    const isFixedAspect = newAspect !== 'auto' && newAspect !== 'fill';
+    target.classList.toggle('has-aspect', isFixedAspect);
     
     // Refresh annotation canvas if active
     if (isAnnotating) {
@@ -999,8 +1152,8 @@ function toggleAspectRatio() {
     if (!isSplitMode) {
         vscode.setState({ ...vscode.getState(), aspectRatio: newAspect });
     }
-    // Send resize event immediately (next tick) to minimize perceived latency
-    setTimeout(() => sendResizeEvent(), 0);
+    // Send resize event with a small delay to allow DOM computation of new layout
+    setTimeout(() => sendResizeEvent(), 50);
 }
 
 function showAspectNotification(aspectRatio) {
@@ -1025,6 +1178,7 @@ function updateControls() {
     document.getElementById('clearBtn').disabled = !hasPlots;
     document.getElementById('zoomBtn').disabled = !hasPlots;
     document.getElementById('aspectBtn').disabled = !hasPlots;
+    document.getElementById('annotateBtn').disabled = !hasPlots;
     document.getElementById('darkModeBtn').disabled = !hasPlots;
     document.getElementById('favoriteFilterBtn').disabled = !hasPlots;
     
@@ -1041,9 +1195,7 @@ function previousPlot() { if (currentIndex > 0) showPlot(currentIndex - 1); }
 function nextPlot() { if (currentIndex < plots.length - 1) showPlot(currentIndex + 1); }
 
 function clearAllPlots() {
-     if (ws && ws.readyState === WebSocket.OPEN) {
-         ws.send(JSON.stringify({ type: 'clear_all' }));
-     }
+     broadcastToBackends({ type: 'clear_all' });
      clearLocalPlots();
 }
 
@@ -1158,13 +1310,12 @@ window.addEventListener('mouseup', () => {
 
 
 function sendResizeEvent() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        let container = document.getElementById('plotContainer');
-        if (isSplitMode) {
-            container = document.getElementById(activePane + 'Pane');
-        }
-        
-        if (container) {
+    let container = document.getElementById('plotContainer');
+    if (isSplitMode) {
+        container = document.getElementById(activePane + 'Pane');
+    }
+    
+    if (container) {
             let width = Math.floor(container.clientWidth); 
             let height = Math.floor(container.clientHeight);
             
@@ -1201,12 +1352,19 @@ function sendResizeEvent() {
                 }
             }
             
-            let pid = (currentIndex >= 0 && currentIndex < plots.length) ? plots[currentIndex].id : null;
+            let pid;
+            if (isSplitMode) {
+                const idx = (activePane === 'left' ? leftIndex : rightIndex);
+                pid = (idx >= 0 && idx < plots.length) ? plots[idx].id : null;
+            } else {
+                pid = (currentIndex >= 0 && currentIndex < plots.length) ? plots[currentIndex].id : null;
+            }
+
             if (width > 50 && height > 50) {
-                ws.send(JSON.stringify({ type: 'resize', width, height, plot_id: pid }));
+                const targetPort = plots[currentIndex] ? plots[currentIndex].port : null;
+                broadcastToBackends({ type: 'resize', width, height, plot_id: pid }, targetPort);
             }
         }
-    }
 }
 
 window.addEventListener('resize', debounce(() => {
@@ -1511,7 +1669,7 @@ function setSplitPosition(index, side, event) {
             paneImg.src = plotUrls.get(plot.id);
             restoreAnnotation(plot.id, side === 'left' ? 'leftAnnotationCanvas' : 'rightAnnotationCanvas');
         } else {
-            ws.send(JSON.stringify({ type: 'request_binary', plot_id: plot.id }));
+            broadcastToBackends({ type: 'request_binary', plot_id: plot.id });
         }
     }
     
@@ -1562,7 +1720,7 @@ function toggleAnnotationMode() {
     if (palette) {
         palette.style.display = isAnnotating ? 'flex' : 'none';
         if (isAnnotating) {
-            applyPaletteState();
+            applyPaletteState(true);
             initPaletteDrag();
             updatePaletteScaling();
         }
@@ -1619,19 +1777,27 @@ function applyPaletteState(immediate = false) {
     
     palette.classList.toggle('palette-horizontal', paletteState.isHorizontal);
     
-    const container = document.getElementById('plotContainer');
+    const container = palette.parentElement;
     if (container) {
         const updatePos = () => {
-            // Force a layout reflow to ensure getBoundingClientRect/offsetWidth are fresh
-            const _reflow = palette.offsetHeight;
             const rect = container.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) {
+                // Container not ready, use raw values without clamping
+                palette.style.left = paletteState.x + 'px';
+                palette.style.top = paletteState.y + 'px';
+                return;
+            }
+
+            // Force layout reflow to ensure palette dimensions are accurate after display:flex
+            const _reflow = palette.offsetHeight;
+            const pRect = palette.getBoundingClientRect();
+
+            // Calculate clamped position using high-precision rects
+            const clampedX = Math.max(4, Math.min(paletteState.x, rect.width - pRect.width - 4));
+            const clampedY = Math.max(4, Math.min(paletteState.y, rect.height - pRect.height - 4));
             
-            // Clamp current position to new constraints
-            paletteState.x = Math.max(4, Math.min(paletteState.x, rect.width - palette.offsetWidth - 4));
-            paletteState.y = Math.max(4, Math.min(paletteState.y, rect.height - palette.offsetHeight - 4));
-            
-            palette.style.left = paletteState.x + 'px';
-            palette.style.top = paletteState.y + 'px';
+            palette.style.left = clampedX + 'px';
+            palette.style.top = clampedY + 'px';
         };
 
         if (immediate) {
@@ -1669,7 +1835,8 @@ function initPaletteDrag() {
     window.addEventListener('mousemove', (e) => {
         if (!isPaletteDragging) return;
         
-        const container = document.getElementById('plotContainer');
+        const container = palette.parentElement;
+        if (!container) return;
         const rect = container.getBoundingClientRect();
         
         // Calculate new position relative to the container
@@ -1697,6 +1864,72 @@ function initPaletteDrag() {
     });
 
     palette.hasDragListener = true;
+}
+
+// History Management
+function getHistory(pid) {
+    if (!annotationHistory.has(String(pid))) {
+        annotationHistory.set(String(pid), { undo: [], redo: [] });
+    }
+    return annotationHistory.get(String(pid));
+}
+
+function renderState(dataUrl) {
+    if (!activeCtx || !activeCanvas) return;
+    activeCtx.clearRect(0, 0, activeCanvas.width, activeCanvas.height);
+    if (!dataUrl) return;
+    
+    const img = new Image();
+    img.onload = () => {
+        activeCtx.drawImage(img, 0, 0, activeCanvas.width, activeCanvas.height);
+    };
+    img.src = dataUrl;
+}
+
+function undoAnnotation() {
+    if (!isAnnotating) return;
+    const pid = isSplitMode ? 
+        (activePane === 'left' ? plots[leftIndex]?.id : plots[rightIndex]?.id) : 
+        plots[currentIndex]?.id;
+    if (!pid) return;
+
+    const history = getHistory(pid);
+    if (history.undo.length === 0) return;
+
+    // Current state to redo
+    const currentState = activeCanvas.toDataURL();
+    history.redo.push(currentState);
+    
+    // Pop from undo and render
+    const prevState = history.undo.pop();
+    renderState(prevState);
+    
+    // Update current storage
+    lastCanvasData.set(String(pid), prevState);
+    saveState();
+}
+
+function redoAnnotation() {
+    if (!isAnnotating) return;
+    const pid = isSplitMode ? 
+        (activePane === 'left' ? plots[leftIndex]?.id : plots[rightIndex]?.id) : 
+        plots[currentIndex]?.id;
+    if (!pid) return;
+
+    const history = getHistory(pid);
+    if (history.redo.length === 0) return;
+
+    // Current state back to undo
+    const currentState = activeCanvas.toDataURL();
+    history.undo.push(currentState);
+    
+    // Pop from redo and render
+    const nextState = history.redo.pop();
+    renderState(nextState);
+    
+    // Update current storage
+    lastCanvasData.set(String(pid), nextState);
+    saveState();
 }
 
 function updatePaletteScaling() {
@@ -1766,12 +1999,60 @@ function setDrawTool(tool) {
 
 function setDrawColor(color) {
     currentColor = color;
-    document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
-    // Find the swatch by style.background or similar
-    const colors = {'#ff4757':'red', '#2ed573':'green', '#1e90ff':'blue', '#ffa502':'orange', '#ffffff':'white'};
-    const id = 'color-' + (colors[color] || 'red');
-    const swatch = document.getElementById(id);
-    if (swatch) swatch.classList.add('active');
+    document.querySelectorAll('.color-swatch').forEach(s => {
+        s.classList.remove('active');
+        s.style.borderColor = 'white'; // Reset to default
+    });
+    
+    // Preset colors mapping
+    const presets = {
+        '#ff4757': 'color-red',
+        '#2ed573': 'color-green',
+        '#1e90ff': 'color-blue',
+        '#ffa502': 'color-orange',
+        '#ffffff': 'color-white'
+    };
+    
+    const id = presets[color.toLowerCase()];
+    if (id) {
+        const swatch = document.getElementById(id);
+        if (swatch) {
+            swatch.classList.add('active');
+            swatch.style.borderColor = color; // Match selected color
+        }
+        // Reset custom swatch appearance when using a preset
+        const customSwatch = document.getElementById('color-custom');
+        if (customSwatch) customSwatch.style.background = '#ffffff';
+    } else {
+        // Custom color: highlight the custom swatch and update its background/border
+        const customSwatch = document.getElementById('color-custom');
+        if (customSwatch) {
+            customSwatch.classList.add('active');
+            customSwatch.style.background = color;
+            customSwatch.style.borderColor = color;
+        }
+    }
+}
+
+function triggerCustomColor() {
+    const picker = document.getElementById('customColorPicker');
+    if (picker) {
+        picker.click();
+    }
+}
+
+// Initialize custom color picker listener
+function initCustomColorPicker() {
+    const picker = document.getElementById('customColorPicker');
+    if (picker) {
+        picker.addEventListener('input', (e) => {
+            setDrawColor(e.target.value);
+        });
+        picker.addEventListener('change', (e) => {
+            setDrawColor(e.target.value);
+            saveState();
+        });
+    }
 }
 
 let startImageData = null;
@@ -1864,6 +2145,15 @@ function saveAnnotationToHistory() {
         plots[currentIndex]?.id;
     
     if (pid) {
+        const history = getHistory(pid);
+        // Save PREVIOUS state to undo stack before updating
+        const prevState = lastCanvasData.get(String(pid)) || '';
+        history.undo.push(prevState);
+        // Limit history size
+        if (history.undo.length > 30) history.undo.shift();
+        // New action clears redo stack
+        history.redo = [];
+
         lastCanvasData.set(String(pid), activeCanvas.toDataURL());
         saveState(); // PERSIST TO VSCODE STATE
     }
@@ -1871,13 +2161,18 @@ function saveAnnotationToHistory() {
 
 function clearAnnotations() {
     if (!activeCtx || !activeCanvas) return;
-    activeCtx.clearRect(0, 0, activeCanvas.width, activeCanvas.height);
     
     const pid = isSplitMode ? 
         (activePane === 'left' ? plots[leftIndex]?.id : plots[rightIndex]?.id) : 
         plots[currentIndex]?.id;
     
     if (pid) {
+        const history = getHistory(pid);
+        const prevState = lastCanvasData.get(String(pid)) || '';
+        history.undo.push(prevState);
+        history.redo = [];
+        
+        activeCtx.clearRect(0, 0, activeCanvas.width, activeCanvas.height);
         lastCanvasData.delete(String(pid));
         saveState();
     }
@@ -2074,6 +2369,24 @@ if (isDarkMode) {
 }
 updateDarkModeUI();
 refreshLayout();
+setDrawColor(currentColor);
+initCustomColorPicker();
+
+// Keyboard Shortcuts
+window.addEventListener('keydown', (e) => {
+    if (isAnnotating) {
+        if (e.ctrlKey || e.metaKey) {
+            if (e.key === 'z') {
+                e.preventDefault();
+                undoAnnotation();
+            } else if (e.key === 'y' || (e.shiftKey && e.key === 'z')) {
+                e.preventDefault();
+                redoAnnotation();
+            }
+        }
+    }
+});
+
 vscode.postMessage({ command: 'request_config' });
 setTimeout(() => {
     document.body.style.opacity = '1';
