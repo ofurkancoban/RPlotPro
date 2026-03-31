@@ -7,19 +7,48 @@ if (!exists(".vsc_rplot", envir = .GlobalEnv)) {
 
 local(
     {
-        # Gerekli paketleri yükle
-        if (!require("httpuv", quietly = TRUE)) {
-            install.packages("httpuv")
+        # Gerekli paketleri sessizce yükle (Yansıtıcı Ayna - CRAN Mirror otomasyonu)
+        ensure_rplot_pkgs <- function() {
+            pkgs <- c("httpuv", "jsonlite", "base64enc", "svglite")
+            missing <- pkgs[!(pkgs %in% installed.packages()[, "Package"])]
+            
+            if (length(missing) > 0) {
+                # Ayna seçimi penceresini engelle (Cloud mirror her zaman en güvenlisi)
+                repos <- getOption("repos")
+                if (is.null(repos) || repos["CRAN"] == "@CRAN@") {
+                    repos["CRAN"] <- "https://cloud.r-project.org"
+                    options(repos = repos)
+                }
+                
+                # Yazma yetkisi olan bir kütüphane yolu bul veya oluştur (Windows kişisel kütüphane engeli için)
+                lib_paths <- .libPaths()
+                writable_lib <- NULL
+                for (p in lib_paths) {
+                    if (file.access(p, 2) == 0) {
+                        writable_lib <- p
+                        break
+                    }
+                }
+                
+                # Eğer hiç yazılabilir kütüphane yoksa, standart kullanıcı kütüphanesini aktive et
+                if (is.null(writable_lib)) {
+                    user_lib <- Sys.getenv("R_LIBS_USER")
+                    if (user_lib != "") {
+                        if (!dir.exists(user_lib)) {
+                            dir.create(user_lib, recursive = TRUE, showWarnings = FALSE)
+                        }
+                        .libPaths(c(user_lib, .libPaths()))
+                        writable_lib <- user_lib
+                    }
+                }
+                
+                # Paketi yükle (lib ve repos vererek soruları bypass ediyoruz)
+                install.packages(missing, lib = writable_lib, dependencies = TRUE)
+            }
         }
-        if (!require("jsonlite", quietly = TRUE)) {
-            install.packages("jsonlite")
-        }
-        if (!require("base64enc", quietly = TRUE)) {
-            install.packages("base64enc")
-        }
-        if (!require("svglite", quietly = TRUE)) {
-            install.packages("svglite")
-        }
+        
+        # Sessizce paket kontrolü yap
+        suppressMessages(ensure_rplot_pkgs())
 
         library(httpuv)
         library(jsonlite)

@@ -275,33 +275,8 @@ function capture_and_send(plot_obj, update_id=nothing, width=nothing, height=not
              return
         end
         
-        # Patch SVG to ensure it fills the container while respecting the viewer's requested aspect mode
-        svg_str = String(raw_data)
-        
-        # [REPAIRED] Internal Re-Flow Strategy (v0.11.9)
-        # We REMOVE 'preserveAspectRatio="none"' to stop the browser from "stretching" the picture.
-        # Instead, we force the backend to actually RE-CALCULATE the plot layout.
-        if occursin("<svg", svg_str)
-            # Remove any existing preserveAspectRatio to revert to default behavior (meet)
-            svg_str = replace(svg_str, r"preserveAspectRatio=\"[^\"]*\"" => "")
-            
-            # Force outer width/height to fill the container wrapper 1:1
-            # We use 100% to ensure the SVG occupies its allotted space, 
-            # and let the backend re-render handle the internal aspect ratio.
-            if occursin("width=\"", svg_str)
-                svg_str = replace(svg_str, r"width=\"[^\"]*\"" => "width=\"100%\"")
-            else
-                svg_str = replace(svg_str, "<svg" => "<svg width=\"100%\"", count=1)
-            end
-            
-            if occursin("height=\"", svg_str)
-                svg_str = replace(svg_str, r"height=\"[^\"]*\"" => "height=\"100%\"")
-            else
-                svg_str = replace(svg_str, "<svg" => "<svg height=\"100%\"", count=1)
-            end
-
-            raw_data = Vector{UInt8}(svg_str)
-        end
+        # Removed duplicate and dangerous String(raw_data) SVG reflow string processing.
+        # Format detection and single SVG patching pass will be performed below instead.
         
         # Use existing ID if it's a re-render/resize, otherwise generate new one
         id = isnothing(update_id) ? "j-$(floor(Int, datetime2unix(now()) * 1000))" : string(update_id)
@@ -350,14 +325,15 @@ function capture_and_send(plot_obj, update_id=nothing, width=nothing, height=not
             svg_str = String(copy(raw_data))
             
             # Trust library coordinate system (viewBox) to prevent cropping
-            # but ensure one exists at least.
             if !occursin("viewBox", svg_str)
                 svg_str = replace(svg_str, r"(<svg)" => SubstitutionString("\\1 viewBox=\"0 0 $(w) $(h)\""))
             end
             
+            # Remove any existing preserveAspectRatio to revert to default behavior (meet)
+            svg_str = replace(svg_str, r"preserveAspectRatio=\"[^\"]*\"" => "")
+            
             # 2b. Fluid Filling
             # Use 100% dimensions but trust the library's viewBox aspect ratio
-            # (which we've already forced via re-rendering above)
             override_attrs = " width=\"100%\" height=\"100%\" preserveAspectRatio=\"xMidYMid meet\""
             
             # Remove existing W/H/preserveAspectRatio from the start tag
@@ -368,7 +344,7 @@ function capture_and_send(plot_obj, update_id=nothing, width=nothing, height=not
             # Inject new fluid attributes
             svg_str = replace(svg_str, r"(<svg)" => SubstitutionString("\\1 $(override_attrs)"))
             
-            raw_data = Vector{UInt8}(svg_str)
+            raw_data = Vector{UInt8}(codeunits(svg_str))
         end
         
         # Broadcast the new plot
@@ -391,7 +367,7 @@ end
 function send_binary(ws, type, bin_payload, metadata=Dict())
     metadata["type"] = type
     meta_json = Base.invokelatest(get_json().json, metadata)
-    meta_bytes = Vector{UInt8}(meta_json)
+    meta_bytes = Vector{UInt8}(codeunits(meta_json))
     meta_len = UInt32(length(meta_bytes))
     
     # Pack: [Uint32 LEN (big endian)][JSON META][PAYLOAD]
@@ -490,6 +466,10 @@ function start_plot_viewer(port=nothing)
     # Force Disable VS Code's internal plot pane
     ENV["JULIA_VSCODE_DISPLAY_PLOTS"] = "false"
     
+    if isnothing(port)
+        port = rand(10000:30000)
+    end
+    
     # Shared config logic
     env_config_path = get(ENV, "VSCODE_R_PLOT_CONFIG", "")
     config_file = if isdir(env_config_path)
@@ -502,10 +482,6 @@ function start_plot_viewer(port=nothing)
     
     # Suppress external GR/GKS windows
     ENV["GKSwstype"] = "100"
-    
-    if isnothing(port)
-        port = rand(10000:30000)
-    end
     
     # Write port to config
     open(config_file, "w") do f
