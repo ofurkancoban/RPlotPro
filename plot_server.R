@@ -403,7 +403,7 @@ local(
             }
 
             writeLines(
-                jsonlite::toJSON(list(port = port), auto_unbox = TRUE),
+                jsonlite::toJSON(list(port = port, language = "r"), auto_unbox = TRUE),
                 local_config_file
             )
 

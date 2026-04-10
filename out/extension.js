@@ -42,9 +42,9 @@ function activate(context) {
         // Forward messages from panel to handle export/config same way
         panel.webview.onDidReceiveMessage(message => {
             if (message.command === 'request_config') {
-                const ports = plotProvider.getPorts();
-                if (ports.length > 0) {
-                    panel.webview.postMessage({ command: 'set_ports', ports: ports });
+                const backends = plotProvider.getBackends();
+                if (backends.length > 0) {
+                    panel.webview.postMessage({ command: 'set_ports', backends: backends });
                 }
             }
             else if (message.command === 'open_new_window') {
@@ -76,9 +76,9 @@ function activate(context) {
             }
         });
         // Proactively send current ports if available
-        const ports = plotProvider.getPorts();
-        if (ports.length > 0) {
-            panel.webview.postMessage({ command: 'set_ports', ports: ports });
+        const backends = plotProvider.getBackends();
+        if (backends.length > 0) {
+            panel.webview.postMessage({ command: 'set_ports', backends: backends });
         }
     }));
     // Config logic
@@ -104,20 +104,24 @@ function activate(context) {
         try {
             if (fs.existsSync(configDir) && fs.statSync(configDir).isDirectory()) {
                 const files = fs.readdirSync(configDir);
-                const ports = [];
+                const backends = [];
                 for (const file of files) {
                     if (file.endsWith('.json')) {
                         try {
                             const content = fs.readFileSync(path.join(configDir, file), 'utf8');
                             const config = JSON.parse(content);
-                            if (config.port)
-                                ports.push(config.port);
+                            if (config.port) {
+                                backends.push({
+                                    port: config.port,
+                                    language: config.language
+                                });
+                            }
                         }
                         catch (e) { /* skip malformed */ }
                     }
                 }
-                if (ports.length > 0) {
-                    plotProvider.postMessage({ command: 'set_ports', ports: ports });
+                if (backends.length > 0) {
+                    plotProvider.postMessage({ command: 'set_ports', backends: backends });
                 }
             }
         }
@@ -309,20 +313,24 @@ class PlotViewProvider {
         try {
             if (this.sessionConfigPath && fs.existsSync(this.sessionConfigPath) && fs.statSync(this.sessionConfigPath).isDirectory()) {
                 const files = fs.readdirSync(this.sessionConfigPath);
-                const ports = [];
+                const backends = [];
                 for (const file of files) {
                     if (file.endsWith('.json')) {
                         try {
                             const content = fs.readFileSync(path.join(this.sessionConfigPath, file), 'utf8');
                             const config = JSON.parse(content);
-                            if (config.port)
-                                ports.push(config.port);
+                            if (config.port) {
+                                backends.push({
+                                    port: config.port,
+                                    language: config.language
+                                });
+                            }
                         }
                         catch (e) { /* skip */ }
                     }
                 }
-                if (ports.length > 0) {
-                    this.postMessage({ command: 'set_ports', ports: ports });
+                if (backends.length > 0) {
+                    this.postMessage({ command: 'set_ports', backends: backends });
                 }
             }
         }
@@ -330,23 +338,27 @@ class PlotViewProvider {
             console.error('Error reading plot ports on request:', e);
         }
     }
-    getPorts() {
+    getBackends() {
         try {
             if (this.sessionConfigPath && fs.existsSync(this.sessionConfigPath) && fs.statSync(this.sessionConfigPath).isDirectory()) {
                 const files = fs.readdirSync(this.sessionConfigPath);
-                const ports = [];
+                const backends = [];
                 for (const file of files) {
                     if (file.endsWith('.json')) {
                         try {
                             const content = fs.readFileSync(path.join(this.sessionConfigPath, file), 'utf8');
                             const config = JSON.parse(content);
-                            if (config.port)
-                                ports.push(config.port);
+                            if (config.port) {
+                                backends.push({
+                                    port: config.port,
+                                    language: config.language
+                                });
+                            }
                         }
                         catch (e) { /* skip */ }
                     }
                 }
-                return ports;
+                return backends;
             }
         }
         catch (e) {

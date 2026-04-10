@@ -61,9 +61,9 @@ export function activate(context: vscode.ExtensionContext) {
             // Forward messages from panel to handle export/config same way
             panel.webview.onDidReceiveMessage(message => {
                 if (message.command === 'request_config') {
-                    const ports = plotProvider.getPorts();
-                    if (ports.length > 0) {
-                        panel.webview.postMessage({ command: 'set_ports', ports: ports });
+                    const backends = plotProvider.getBackends();
+                    if (backends.length > 0) {
+                        panel.webview.postMessage({ command: 'set_ports', backends: backends });
                     }
                 } else if (message.command === 'open_new_window') {
                     vscode.commands.executeCommand('rPlotViewer.openGallery');
@@ -92,9 +92,9 @@ export function activate(context: vscode.ExtensionContext) {
             });
 
             // Proactively send current ports if available
-            const ports = plotProvider.getPorts();
-            if (ports.length > 0) {
-                panel.webview.postMessage({ command: 'set_ports', ports: ports });
+            const backends = plotProvider.getBackends();
+            if (backends.length > 0) {
+                panel.webview.postMessage({ command: 'set_ports', backends: backends });
             }
         })
     );
@@ -127,18 +127,23 @@ export function activate(context: vscode.ExtensionContext) {
         try {
             if (fs.existsSync(configDir) && fs.statSync(configDir).isDirectory()) {
                 const files = fs.readdirSync(configDir);
-                const ports: number[] = [];
+                const backends: { port: number, language?: string }[] = [];
                 for (const file of files) {
                     if (file.endsWith('.json')) {
                         try {
                             const content = fs.readFileSync(path.join(configDir, file), 'utf8');
                             const config = JSON.parse(content);
-                            if (config.port) ports.push(config.port);
+                            if (config.port) {
+                                backends.push({ 
+                                    port: config.port, 
+                                    language: config.language 
+                                });
+                            }
                         } catch (e) { /* skip malformed */ }
                     }
                 }
-                if (ports.length > 0) {
-                    plotProvider.postMessage({ command: 'set_ports', ports: ports });
+                if (backends.length > 0) {
+                    plotProvider.postMessage({ command: 'set_ports', backends: backends });
                 }
             }
         } catch (e) {
@@ -359,18 +364,23 @@ class PlotViewProvider implements vscode.WebviewViewProvider {
         try {
             if (this.sessionConfigPath && fs.existsSync(this.sessionConfigPath) && fs.statSync(this.sessionConfigPath).isDirectory()) {
                 const files = fs.readdirSync(this.sessionConfigPath);
-                const ports: number[] = [];
+                const backends: { port: number, language?: string }[] = [];
                 for (const file of files) {
                     if (file.endsWith('.json')) {
                         try {
                             const content = fs.readFileSync(path.join(this.sessionConfigPath, file), 'utf8');
                             const config = JSON.parse(content);
-                            if (config.port) ports.push(config.port);
+                            if (config.port) {
+                                backends.push({ 
+                                    port: config.port, 
+                                    language: config.language 
+                                });
+                            }
                         } catch (e) { /* skip */ }
                     }
                 }
-                if (ports.length > 0) {
-                    this.postMessage({ command: 'set_ports', ports: ports });
+                if (backends.length > 0) {
+                    this.postMessage({ command: 'set_ports', backends: backends });
                 }
             }
         } catch (e) {
@@ -378,21 +388,26 @@ class PlotViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    public getPorts(): number[] {
+    public getBackends(): { port: number, language?: string }[] {
         try {
             if (this.sessionConfigPath && fs.existsSync(this.sessionConfigPath) && fs.statSync(this.sessionConfigPath).isDirectory()) {
                 const files = fs.readdirSync(this.sessionConfigPath);
-                const ports: number[] = [];
+                const backends: { port: number, language?: string }[] = [];
                 for (const file of files) {
                     if (file.endsWith('.json')) {
                         try {
                             const content = fs.readFileSync(path.join(this.sessionConfigPath, file), 'utf8');
                             const config = JSON.parse(content);
-                            if (config.port) ports.push(config.port);
+                            if (config.port) {
+                                backends.push({ 
+                                    port: config.port, 
+                                    language: config.language 
+                                });
+                            }
                         } catch (e) { /* skip */ }
                     }
                 }
-                return ports;
+                return backends;
             }
         } catch (e) {
             console.error('Error reading ports:', e);

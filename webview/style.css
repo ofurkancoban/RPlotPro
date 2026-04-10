@@ -54,7 +54,7 @@ body {
 .connection-status {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     font-size: 10px;
     color: var(--text-secondary);
     margin-left: 8px;
@@ -62,11 +62,32 @@ body {
     border-left: 1px solid var(--border-color);
 }
 
+.status-logos {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.3s ease;
+}
+
+.status-logos svg {
+    height: 18px;
+    width: auto;
+    filter: drop-shadow(0 0 2px rgba(0,0,0,0.1));
+    transition: transform 0.2s ease, filter 0.2s ease;
+    cursor: default;
+}
+
+.status-logos svg:hover {
+    transform: scale(1.1);
+    filter: drop-shadow(0 0 4px rgba(0,0,0,0.2));
+}
+
 .status-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background: var(--vscode-debugIcon-stopForeground, #f48771);
+    transition: background 0.3s ease;
 }
 .status-dot.connected {
     background: var(--vscode-debugIcon-startForeground, #89d185);

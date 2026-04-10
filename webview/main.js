@@ -191,7 +191,7 @@ window.addEventListener('message', event => {
     const message = event.data;
     switch (message.command) {
         case 'set_ports':
-            updateConnections(message.ports);
+            updateConnections(message.backends);
             break;
         case 'set_active_file':
             // Broadcast to all active backends
@@ -225,9 +225,17 @@ function debounce(func, wait) {
 }
 
 const activeSockets = new Map(); // port -> WebSocket
+const portLanguages = new Map(); // port -> language
 
-function updateConnections(ports) {
-    if (!ports) return;
+const LOGOS = {
+    julia: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><path d="M58.3 93.5c0 15.7-12.7 28.3-28.3 28.3-15.7 0-28.3-12.7-28.3-28.3 0-15.6 12.7-28.3 28.3-28.3 15.6-.1 28.3 12.6 28.3 28.3" fill="#cb3c33"/><path d="M30 123.4c-16.5 0-30-13.4-30-30s13.4-30 30-30 30 13.4 30 30-13.5 30-30 30zm0-56.6c-14.7 0-26.7 12-26.7 26.7s12 26.7 26.7 26.7 26.7-12 26.7-26.7-12-26.7-26.7-26.7z" fill="#eee"/><path d="M126.4 93.5c0 15.7-12.7 28.3-28.3 28.3s-28.3-12.7-28.3-28.3c0-15.6 12.7-28.3 28.3-28.3s28.3 12.6 28.3 28.3" fill="#9558b2"/><path d="M98 123.4c-16.5 0-30-13.4-30-30s13.4-30 30-30 30 13.4 30 30-13.4 30-30 30zm0-56.6c-14.7 0-26.7 12-26.7 26.7s12 26.7 26.7 26.7 26.7-12 26.7-26.7S112.8 66.8 98 66.8z" fill="#eee"/><path d="M92.4 34.5c0 15.6-12.7 28.3-28.3 28.3-15.7 0-28.3-12.7-28.3-28.3S48.4 6.2 64 6.2c15.7 0 28.4 12.7 28.4 28.3" fill="#389826"/><path d="M64 64.5c-16.5 0-30-13.4-30-30s13.4-30 30-30 30 13.4 30 30-13.5 30-30 30zm0-56.7c-14.7 0-26.7 12-26.7 26.7s12 26.7 26.7 26.7 26.7-12 26.7-26.7S78.7 7.8 64 7.8z" fill="#eee"/></svg>`,
+    r: `<svg preserveAspectRatio="xMidYMid" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="r-original-a" x1=".741" x2="590.86" y1="3.666" y2="593.79" gradientTransform="matrix(.2169 0 0 .14527 -.16 14.112)" gradientUnits="userSpaceOnUse"><stop stop-color="#cbced0" offset="0"/><stop stop-color="#84838b" offset="1"/></linearGradient><linearGradient id="r-original-b" x1="301.03" x2="703.07" y1="151.4" y2="553.44" gradientTransform="matrix(.17572 0 0 .17931 -.16 14.112)" gradientUnits="userSpaceOnUse"><stop stop-color="#276dc3" offset="0"/><stop stop-color="#165caa" offset="1"/></linearGradient></defs><path d="M64 100.38c-35.346 0-64-19.19-64-42.863 0-23.672 28.654-42.863 64-42.863s64 19.19 64 42.863c0 23.672-28.654 42.863-64 42.863zm9.796-68.967c-26.866 0-48.646 13.119-48.646 29.303 0 16.183 21.78 29.303 48.646 29.303s46.693-8.97 46.693-29.303c0-20.327-19.827-29.303-46.693-29.303z" fill="url(#r-original-a)" fill-rule="evenodd"/><path d="M97.469 81.033s3.874 1.169 6.124 2.308c.78.395 2.132 1.183 3.106 2.219a8.388 8.388 0 011.42 2.04l15.266 25.74-24.674.01-11.537-21.666s-2.363-4.06-3.817-5.237c-1.213-.982-1.73-1.331-2.929-1.331h-5.862l.004 28.219-21.833.009V41.26h43.844s19.97.36 19.97 19.359c0 18.999-19.082 20.413-19.082 20.413zm-9.497-24.137l-13.218-.009-.006 12.258 13.224-.005s6.124-.019 6.124-6.235c0-6.34-6.124-6.009-6.124-6.009z" fill="url(#r-original-b)" fill-rule="evenodd"/></svg>`
+};
+
+function updateConnections(backends) {
+    if (!backends) return;
+    
+    const ports = backends.map(b => Number(b.port));
 
     // 1. Close connections for ports no longer in the list
     for (const [port, socket] of activeSockets) {
@@ -235,13 +243,21 @@ function updateConnections(ports) {
             log(`Closing connection to port ${port}`);
             socket.close();
             activeSockets.delete(port);
+            portLanguages.delete(port);
         }
     }
     
     // 2. Open connections for new ports
-    for (const port of ports) {
-        if (!activeSockets.has(Number(port))) {
-            connectToPort(Number(port));
+    for (const backend of backends) {
+        const port = Number(backend.port);
+        const lang = backend.language;
+        
+        if (!activeSockets.has(port)) {
+            connectToPort(port, lang);
+        } else if (lang && !portLanguages.has(port)) {
+            // Update language if it was missing initially
+            portLanguages.set(port, lang);
+            updateConnectionStatus(true);
         }
     }
     
@@ -268,7 +284,7 @@ function broadcastToBackends(data, targetPort = null) {
     }
 }
 
-function connectToPort(port) {
+function connectToPort(port, language) {
     const url = 'ws://127.0.0.1:' + port;
     log(`Connecting to ${url}...`);
     
@@ -277,10 +293,12 @@ function connectToPort(port) {
         socket.binaryType = 'arraybuffer';
         let heartbeat;
         let p = port;
+        let lang = language;
 
         socket.onopen = () => {
             log(`Connected to port ${p}`);
             activeSockets.set(p, socket);
+            if (lang) portLanguages.set(p, lang);
             updateConnectionStatus(true);
             socket.send(JSON.stringify({ type: 'get_plots' }));
             
@@ -305,6 +323,7 @@ function connectToPort(port) {
         socket.onclose = () => {
             if (heartbeat) clearInterval(heartbeat);
             activeSockets.delete(p);
+            portLanguages.delete(p);
             updateConnectionStatus(activeSockets.size > 0);
             log(`Closed port ${p}`);
         };
@@ -312,6 +331,7 @@ function connectToPort(port) {
         socket.onerror = (e) => {
             if (heartbeat) clearInterval(heartbeat);
             activeSockets.delete(p);
+            portLanguages.delete(p);
             updateConnectionStatus(activeSockets.size > 0);
         };
 
@@ -637,13 +657,49 @@ function rehydratePlots() {
 
 function updateConnectionStatus(connected) {
     const dot = document.getElementById('statusDot');
-    const text = document.getElementById('statusText');
+    const logosContainer = document.getElementById('statusLogos');
+    
     if (connected) {
         dot.classList.add('connected');
-        text.textContent = 'Active';
+        
+        // Determine unique active languages
+        const connectedLangs = new Set();
+        for (const [port, socket] of activeSockets) {
+            if (socket.readyState === WebSocket.OPEN) {
+                const lang = portLanguages.get(port);
+                if (lang) connectedLangs.add(lang);
+            }
+        }
+        
+        // Update logos
+        if (logosContainer) {
+            logosContainer.innerHTML = '';
+            
+            // Sort to keep order consistent (R then Julia or vice versa)
+            const sortedLangs = Array.from(connectedLangs).sort(); 
+            
+            if (sortedLangs.length === 0) {
+                const activeText = document.createElement('span');
+                activeText.textContent = 'Active';
+                activeText.style.fontSize = '10px';
+                logosContainer.appendChild(activeText);
+            } else {
+                sortedLangs.forEach(lang => {
+                    const logoSvg = LOGOS[lang.toLowerCase()];
+                    if (logoSvg) {
+                        const div = document.createElement('div');
+                        div.innerHTML = logoSvg;
+                        div.title = lang.charAt(0).toUpperCase() + lang.slice(1) + ' Active';
+                        logosContainer.appendChild(div.firstChild);
+                    }
+                });
+            }
+        }
     } else {
         dot.classList.remove('connected');
-        text.textContent = 'Offline';
+        if (logosContainer) {
+            logosContainer.innerHTML = '<span style="font-size: 10px; opacity: 0.6;">Offline</span>';
+        }
     }
 }
 

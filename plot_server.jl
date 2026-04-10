@@ -509,7 +509,7 @@ function start_plot_viewer(port=nothing)
     
     # Write port to config
     open(config_file, "w") do f
-        Base.invokelatest(get_json().print, f, Dict("port" => port))
+        Base.invokelatest(get_json().print, f, Dict("port" => port, "language" => "julia"))
     end
     
     # Register display and ensure it's at the top
