@@ -11,6 +11,27 @@ export start_plot_viewer, stop_plot_viewer, RPlotProDisplay
 get_json() = Base.invokelatest(getfield, Main, :JSON)
 get_http() = Base.invokelatest(getfield, Main, :HTTP)
 
+# Robust module resolution for plotting libraries to prevent UndefVarError in async context
+function get_plots_module()
+    try
+        if isdefined(Main, :Plots)
+            return Base.getfield(Main, :Plots)
+        end
+    catch
+    end
+    return nothing
+end
+
+function get_makie_module()
+    try
+        if isdefined(Main, :Makie)
+            return Base.getfield(Main, :Makie)
+        end
+    catch
+    end
+    return nothing
+end
+
 # Helper to ensure packages are available
 function ensure_packages()
     pkgs = ["HTTP", "JSON"]
@@ -121,41 +142,124 @@ function capture_and_send(plot_obj, update_id=nothing, width=nothing, height=not
             client_dims[] = (width=w, height=h)
         end
         
-        # 1. Force size for common libraries if possible
         obj_type = string(typeof(plot_obj))
-        if occursin("Plots.Plot", obj_type)
-            try
-                # Plots.jl Re-wrapping: The most reliable way to enforce a new aspect ratio
-                # is to reconstruct the plot object with the target size.
-                plot_obj = Base.invokelatest(Main.Plots.plot, plot_obj, size=(w, h))
-                last_plot[] = plot_obj
-            catch
-                try
-                    # Fallback for older Plots.jl versions or specific backends
-                    plot_obj.attr[:size] = (w, h)
-                    if hasproperty(plot_obj, :o) && hasproperty(plot_obj.o, :size)
-                        plot_obj.o.size = (w, h)
-                    end
-                catch
-                end
+        
+        # Resolve modules aggressively 
+        # DNA-Based Lookup: Extract module directly from the object's type to bypass scope blindness
+        PlotsMod = nothing
+        MakieMod = nothing
+        
+        try
+            # We look at the "Origin" of the object
+            origin_mod = parentmodule(typeof(plot_obj))
+            origin_name = string(nameof(origin_mod))
+            
+            if origin_name == "Plots"
+                PlotsMod = origin_mod
+            elseif origin_name == "Makie"
+                MakieMod = origin_mod
             end
-        elseif occursin("Makie.Figure", obj_type) || occursin("Makie.Scene", obj_type)
+        catch
+        end
+        
+        # Fallback to Global Lookup if DNA failed or module was different
+        if isnothing(PlotsMod)
             try
-                # Makie: Use the official resize! function.
-                Base.invokelatest(Main.Makie.resize!, plot_obj, w, h)
+                if isdefined(Main, :Plots)
+                    PlotsMod = Base.getfield(Main, :Plots)
+                end
             catch
+            end
+        end
+        
+        if isnothing(MakieMod)
+            try
+                if isdefined(Main, :Makie)
+                    MakieMod = Base.getfield(Main, :Makie)
+                end
+            catch
+            end
+        end
+        
+        # Relaxed type check to catch wrapped plot objects
+        is_plots_obj = occursin("Plots.Plot", obj_type) || occursin("Plots.Subplot", obj_type)
+        is_makie_obj = occursin("Makie.Figure", obj_type) || occursin("Makie.Scene", obj_type) || occursin("Makie.FigureAxisPlot", obj_type)
+        
+        if !isnothing(PlotsMod) && is_plots_obj
+            try
+                
+                # [NUCLEAR] GKS Master Reset - force the graphics engine to die and reborn with new size
                 try
-                    if hasproperty(plot_obj, :scene)
-                        Base.invokelatest(Main.Makie.resize!, plot_obj.scene, w, h)
+                    backend_name = string(Base.invokelatest(PlotsMod.backend))
+                    if occursin("GR", backend_name) && hasproperty(PlotsMod, :GR)
+                        # Close the old stubborn workstation
+                        try
+                            Base.invokelatest(PlotsMod.GR.emergencyclosegks)
+                        catch
+                        end
+                        
+                        # Dominant environment variables
+                        ENV["GR_WIDTH"] = string(w)
+                        ENV["GR_HEIGHT"] = string(h)
                     end
                 catch
                 end
+                
+                # [NUCLEAR] Update global defaults
+                try
+                    Base.invokelatest(PlotsMod.default, size=(w, h), aspect_ratio=:auto)
+                    
+                    # Also try updating the specific GR viewport if possible
+                    if hasproperty(PlotsMod, :GR)
+                        try
+                            Base.invokelatest(PlotsMod.GR.set_viewport_size, w, h)
+                        catch
+                        end
+                    end
+                catch
+                end
+                
+                # Proactive attribute forcing
+                try
+                    # Handles both Plot and Subplot objects
+                    if hasproperty(plot_obj, :attr)
+                        plot_obj.attr[:size] = (w, h)
+                        plot_obj.attr[:aspect_ratio] = :auto
+                    end
+                catch
+                end
+                
+                # Re-render with explicit size and auto aspect ratio
+                plot_obj = Base.invokelatest(PlotsMod.plot, plot_obj, size=(w, h), aspect_ratio=:auto)
+                
+                # [NEW] Force layout recalculation
+                try
+                    Base.invokelatest(PlotsMod.prepare_output, plot_obj)
+                catch
+                end
+                
+                last_plot[] = plot_obj
+            catch e
+                @warn "R Plot Pro: Plots.jl re-render failed" exception=e
+            end
+        elseif !isnothing(MakieMod) && is_makie_obj
+            try
+                # Also set environment hints for Makie backends that might use them
+                ENV["GLMakie_WINDOW_SIZE"] = "$(w),$(h)"
+                
+                Base.invokelatest(MakieMod.resize!, plot_obj, w, h)
+                if hasproperty(plot_obj, :scene)
+                    Base.invokelatest(MakieMod.resize!, plot_obj.scene, w, h)
+                end
+            catch e
+                @warn "R Plot Pro: Makie resize failed" exception=e
             end
         end
         
         # Capture with size hints via IOContext - crucial for Makie/Plots.jl
         io = IOBuffer()
-        ctx = IOContext(io, :size => (w, h), :resolution => (w, h), :pt_size => (w, h), :px_per_unit => 1, :full_size => (w, h))
+        # Provide both :size and :resolution for maximum backend compatibility
+        ctx = IOContext(io, :size => (w, h), :resolution => (w, h))
         
         try
             Base.invokelatest(show, ctx, MIME("image/svg+xml"), plot_obj)
@@ -165,18 +269,55 @@ function capture_and_send(plot_obj, update_id=nothing, width=nothing, height=not
         end
         
         raw_data = take!(io)
+        
         if length(raw_data) < 100
+             @error "R Plot Pro: Captured data is too small (size=$(length(raw_data)) bytes). Skipping broadcast."
              return
+        end
+        
+        # Patch SVG to ensure it fills the container while respecting the viewer's requested aspect mode
+        svg_str = String(raw_data)
+        
+        # [REPAIRED] Internal Re-Flow Strategy (v0.11.9)
+        # We REMOVE 'preserveAspectRatio="none"' to stop the browser from "stretching" the picture.
+        # Instead, we force the backend to actually RE-CALCULATE the plot layout.
+        if occursin("<svg", svg_str)
+            # Remove any existing preserveAspectRatio to revert to default behavior (meet)
+            svg_str = replace(svg_str, r"preserveAspectRatio=\"[^\"]*\"" => "")
+            
+            # Force outer width/height to fill the container wrapper 1:1
+            # We use 100% to ensure the SVG occupies its allotted space, 
+            # and let the backend re-render handle the internal aspect ratio.
+            if occursin("width=\"", svg_str)
+                svg_str = replace(svg_str, r"width=\"[^\"]*\"" => "width=\"100%\"")
+            else
+                svg_str = replace(svg_str, "<svg" => "<svg width=\"100%\"", count=1)
+            end
+            
+            if occursin("height=\"", svg_str)
+                svg_str = replace(svg_str, r"height=\"[^\"]*\"" => "height=\"100%\"")
+            else
+                svg_str = replace(svg_str, "<svg" => "<svg height=\"100%\"", count=1)
+            end
+
+            raw_data = Vector{UInt8}(svg_str)
         end
         
         # Use existing ID if it's a re-render/resize, otherwise generate new one
         id = isnothing(update_id) ? "j-$(floor(Int, datetime2unix(now()) * 1000))" : string(update_id)
-        format = occursin("svg", String(raw_data[1:min(100, end)])) ? "svg" : "png"
+        # Use simple sniff for format
+        format = "svg" # Default to svg in this branch
+        if length(raw_data) > 8 && raw_data[1:8] == [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+            format = "png"
+        end
         
         metadata = Dict(
             "id" => id,
             "timestamp" => Dates.format(now(), "HH:MM:SS"),
-            "format" => format
+            "format" => format,
+            "width" => w,
+            "height" => h,
+            "type" => isnothing(update_id) ? "new_plot" : "update_plot"
         )
         
         if isnothing(update_id)
@@ -208,31 +349,29 @@ function capture_and_send(plot_obj, update_id=nothing, width=nothing, height=not
         if format == "svg"
             svg_str = String(copy(raw_data))
             
-            # 2a. Smart SVG Patching with Aspect Enforcement
-            has_viewbox = occursin(r"viewBox=[\"'][^\"']*[\"']", svg_str)
-            
-            if !has_viewbox
-                m_w = match(r"width=[\"']([\d\.]+)(\w*)[\"']", svg_str)
-                m_h = match(r"height=[\"']([\d\.]+)(\w*)[\"']", svg_str)
-                vw = m_w !== nothing ? m_w.captures[1] : string(w)
-                vh = m_h !== nothing ? m_h.captures[1] : string(h)
-                svg_str = replace(svg_str, r"(<svg)" => SubstitutionString("\\1 viewBox=\"0 0 $(vw) $(vh)\""))
+            # Trust library coordinate system (viewBox) to prevent cropping
+            # but ensure one exists at least.
+            if !occursin("viewBox", svg_str)
+                svg_str = replace(svg_str, r"(<svg)" => SubstitutionString("\\1 viewBox=\"0 0 $(w) $(h)\""))
             end
             
-            # Now override width/height to requested pixels
-            # Removed preserveAspectRatio="none" to prevent distortion ( PREMIUM FIX )
-            override_attrs = " width=\"$(w)px\" height=\"$(h)px\""
+            # 2b. Fluid Filling
+            # Use 100% dimensions but trust the library's viewBox aspect ratio
+            # (which we've already forced via re-rendering above)
+            override_attrs = " width=\"100%\" height=\"100%\" preserveAspectRatio=\"xMidYMid meet\""
             
             # Remove existing W/H/preserveAspectRatio from the start tag
             svg_str = replace(svg_str, r"(<svg[^>]*?)\s+width=[\"'][^\"']*[\"']" => s"\1")
             svg_str = replace(svg_str, r"(<svg[^>]*?)\s+height=[\"'][^\"']*[\"']" => s"\1")
             svg_str = replace(svg_str, r"(<svg[^>]*?)\s+preserveAspectRatio=[\"'][^\"']*[\"']" => s"\1")
             
-            # Inject new attributes
+            # Inject new fluid attributes
             svg_str = replace(svg_str, r"(<svg)" => SubstitutionString("\\1 $(override_attrs)"))
             
             raw_data = Vector{UInt8}(svg_str)
         end
+        
+        # Broadcast the new plot
         
         raw_plots[id] = raw_data
         
@@ -312,7 +451,7 @@ function handle_ws_message(ws, msg)
         new_w = round(Int, Float64(data["width"]))
         new_h = round(Int, Float64(data["height"]))
         
-        # Prevent infinite loops: only re-render if dimensions changed meaningfully (> 5px)
+        # Prevent infinite loops: only re-render if dimensions changed meaningfully
         old_w = client_dims[].width
         old_h = client_dims[].height
         
@@ -322,9 +461,6 @@ function handle_ws_message(ws, msg)
             if isnothing(pid) || !startswith(string(pid), "j-")
                 return
             end
-            
-            # Terminal Feedback
-            @info "R Plot Pro: Updating Julia plot $(pid) to $(new_w)x$(new_h)..."
             
             client_dims[] = (width=new_w, height=new_h)
             
@@ -426,19 +562,27 @@ function start_plot_viewer(port=nothing)
     # One-shot method shadowing at startup
     ensure_method_shadowing()
     
-    # Periodic Re-stacking Task (every 10 seconds) — NO method shadowing here!
+    # Periodic Re-stacking Task (every 5 seconds)
+    vscode_shadowed = Ref(false)
     makie_shadowed = Ref(false)
     @async while !isnothing(server_task[])
         try
             ensure_display_at_top()
+            
             # One-time Makie shadowing when it becomes available
             if !makie_shadowed[] && isdefined(Main, :Makie)
                 ensure_method_shadowing()
                 makie_shadowed[] = true
             end
-        catch
+            
+            # Check for VSCodeServer presence during runtime
+            if !vscode_shadowed[] && isdefined(Main, :VSCodeServer)
+                ensure_method_shadowing()
+                vscode_shadowed[] = true
+            end
+        catch e
         end
-        sleep(10)
+        sleep(5.0)
     end
 end
 
@@ -446,12 +590,6 @@ function stop_plot_viewer()
     # Remove display
     filter!(d -> !(d isa RPlotProDisplay), Base.Multimedia.displays)
     
-    # Currently HTTP.jl doesn't have a simple way to stop listen() from outside
-    # except by killing the task or closing the sockets
-    try
-        last_stack_hash[] = 0
-    catch
-    end
     if !isnothing(server_task[])
         @async Base.throwto(server_task[], InterruptException())
     end
@@ -461,7 +599,7 @@ const last_stack_hash = Ref{UInt}(0)
 
 function ensure_display_at_top()
     # Move our display to the top of the stack by removing it and re-pushing it.
-    # Also attempt to demote VSCode's built-in displays.
+    # Also attempt to demote VS Code's built-in displays.
     try
         # 0. Force Makie to use standard display stack if available
         if isdefined(Main, :Makie)
@@ -470,12 +608,6 @@ function ensure_display_at_top()
             catch
             end
         end
-
-        stack = Base.Multimedia.displays
-        types = [string(typeof(d)) for d in stack]
-        new_hash = hash(types)
-        
-        last_stack_hash[] = new_hash
 
         # 1. Take ourselves out
         filter!(d -> !(d isa RPlotProDisplay), Base.Multimedia.displays)
@@ -493,7 +625,6 @@ function ensure_display_at_top()
         # 3. Push ourselves to the extreme top
         pushdisplay(RPlotProDisplay())
     catch e
-        @warn "R Plot Pro: Could not re-stack display" exception=e
     end
 end
 
@@ -502,8 +633,9 @@ function ensure_method_shadowing()
     try
         Base.eval(Main, quote
             function Base.display(x)
-                if isdefined(Main, :RPlotPro) && Main.RPlotPro.is_plot_object(x)
-                    Main.RPlotPro.capture_and_send(x)
+                # Use invokelatest to handle potential world age issues with newly loaded plot objects
+                if isdefined(Main, :RPlotPro) && Base.invokelatest(Main.RPlotPro.is_plot_object, x)
+                    Base.invokelatest(Main.RPlotPro.capture_and_send, x)
                     return nothing
                 end
                 for d in reverse(Base.Multimedia.displays)
@@ -529,20 +661,17 @@ function ensure_method_shadowing()
             Base.eval(Main.VSCodeServer, quote
                 # Override their specialized display logic
                 function display(x)
-                    if Main.RPlotPro.is_plot_object(x)
-                        Main.RPlotPro.capture_and_send(x)
+                    if isdefined(Main, :RPlotPro) && Base.invokelatest(Main.RPlotPro.is_plot_object, x)
+                        Base.invokelatest(Main.RPlotPro.capture_and_send, x)
                         return nothing
                     end
-                    # Standard VSCodeServer.display behavior is complex; 
-                    # but if it's not a plot, we let it fall through or 
-                    # use the multimedia stack.
                     Base.Multimedia.display(x)
                 end
 
                 # Override their inline display hook
                 function inline_display(x)
-                    if Main.RPlotPro.is_plot_object(x)
-                        Main.RPlotPro.capture_and_send(x)
+                    if isdefined(Main, :RPlotPro) && Base.invokelatest(Main.RPlotPro.is_plot_object, x)
+                        Base.invokelatest(Main.RPlotPro.capture_and_send, x)
                         return true # Handled!
                     end
                     return false # Not handled

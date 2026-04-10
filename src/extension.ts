@@ -4,6 +4,10 @@ import * as fs from 'fs';
 import * as os from 'os';
 
 export function activate(context: vscode.ExtensionContext) {
+    // Create diagnostic output channel
+    const outputChannel = vscode.window.createOutputChannel("R Plot Pro");
+    outputChannel.appendLine("R Plot Pro: Extension activated.");
+    
     const plotProvider = new PlotViewProvider(context.extensionUri);
 
     context.subscriptions.push(
@@ -167,44 +171,92 @@ export function activate(context: vscode.ExtensionContext) {
     if (autoAttach) {
         const rSetupCmd = `source('${normalizedInitPath}')`;
         const juliaSetupCmd = `include("${normalizedJlPath}")`;
-        const injectedTerminals = new Set<vscode.Terminal>();
+        const injectedPids = new Set<number>();
+        const tryInject = async (terminal: vscode.Terminal, retryCount = 0, force = false) => {
+            if (!terminal) return;
+            
+            let pid: number | undefined;
+            try {
+                pid = await terminal.processId;
+            } catch (e) {
+                return;
+            }
+            if (!pid) return;
 
-        const tryInject = (terminal: vscode.Terminal) => {
-            if (injectedTerminals.has(terminal)) return;
+            if (!force && injectedPids.has(pid)) return;
+            if (!force) injectedPids.add(pid);
 
             const name = terminal.name;
-            // More specific check to avoid non-R terminals like "Julia REPL"
-            // \bR\b ensures we match R as a standalone word, not as a character in "REPL"
+            const shellPath = (terminal.creationOptions as any)?.shellPath || '';
+            
+            outputChannel.appendLine(`[Scan #${retryCount}] Terminal: "${name}" | PID: ${pid} | Shell: ${shellPath}${force ? ' [FORCE]' : ''}`);
+
             const isRTerminal = 
                 name === "R Interactive" || 
                 name === "R" || 
                 name.startsWith("R: ") || 
                 name.startsWith("R [") ||
+                name.startsWith("R (") ||
                 (/\bR\b/.test(name) && !/(Julia|Python|Node|IPython)/i.test(name) && !name.includes("zsh") && !name.includes("bash"));
             
-            const isJuliaTerminal = name.toLowerCase().includes("julia");
-
+            const isJuliaTerminal = 
+                /julia/i.test(name) || 
+                name === "Julia REPL" ||
+                name === "julia" ||
+                name.startsWith("julia (");
+    
             if (isRTerminal) {
-                terminal.sendText(rSetupCmd, true);
-                injectedTerminals.add(terminal);
+                setTimeout(() => {
+                    const rInner = `Sys.setenv(VSCODE_R_PLOT_CONFIG='${uniqueConfigDir}'); source(if(Sys.getenv('VSC_R_PLOT_INIT') != '') Sys.getenv('VSC_R_PLOT_INIT') else '${normalizedInitPath}')`;
+                    const totalLen = 2 + rInner.length + 30; // 2 for "> ", 30 for VSC_R_PLOT_LEN prefix
+                    terminal.sendText(`Sys.setenv(VSC_R_PLOT_LEN=${totalLen}); ${rInner}`, true);
+                }, 3000);
             } else if (isJuliaTerminal) {
-                terminal.sendText(juliaSetupCmd, true);
-                injectedTerminals.add(terminal);
+                // Wait for Julia REPL to be ready (Julia can be slow to start)
+                setTimeout(() => {
+                    const jlInner = `ENV["VSCODE_R_PLOT_CONFIG"] = "${uniqueConfigDir}"; include(get(ENV, "VSC_JL_PLOT_INIT", "${normalizedJlPath}"))`;
+                    const totalLen = 7 + jlInner.length + 30; // 7 for "julia> ", 30 for VSC_JL_PLOT_LEN prefix
+                    terminal.sendText(`ENV["VSC_JL_PLOT_LEN"] = ${totalLen}; ${jlInner}`, true);
+                }, 2500);
+            } else {
+                // If it's a generic terminal name, it might be renamed later (VS Code behavior)
+                const isGeneric = /^(zsh|bash|sh|cmd|powershell|pwsh|Task)$/i.test(name);
+                if (isGeneric && retryCount < 5) {
+                    const delay = retryCount === 0 ? 1500 : 3000;
+                    outputChannel.appendLine(` >> Generic "${name}" detected. Retrying in ${delay}ms (Attempt ${retryCount + 1}/5)...`);
+                    setTimeout(() => {
+                        tryInject(terminal, retryCount + 1);
+                    }, delay);
+                }
             }
         };
-
+    
         if (vscode.window.activeTerminal) {
             tryInject(vscode.window.activeTerminal);
         }
-
+    
         context.subscriptions.push(vscode.window.onDidOpenTerminal(term => {
-            setTimeout(() => tryInject(term), 1000);
+            outputChannel.appendLine(`New terminal opened: "${term.name}". Initial scan in 3s...`);
+            setTimeout(() => tryInject(term), 3000);
         }));
-
+    
+        // Re-check terminal when focus changes, as shells often rename themselves on interaction
+        context.subscriptions.push(vscode.window.onDidChangeActiveTerminal(term => {
+            if (term) {
+                // We only log if it's a potential candidate to keep output clean
+                const name = term.name;
+                const isPotential = name === 'R Interactive' || name === 'R' || name === 'julia' || /^(zsh|bash|sh|cmd|powershell|pwsh|Task)$/i.test(name);
+                if (isPotential) {
+                    tryInject(term);
+                }
+            }
+        }));
+    
         context.subscriptions.push(vscode.commands.registerCommand('rPlotViewer.attach', () => {
             if (vscode.window.activeTerminal) {
-                tryInject(vscode.window.activeTerminal);
-                vscode.window.showInformationMessage('R Plot Pro attached to terminal.');
+                outputChannel.appendLine(`Manual attach requested for: "${vscode.window.activeTerminal.name}"`);
+                tryInject(vscode.window.activeTerminal, 0, true);
+                vscode.window.showInformationMessage('R Plot Pro: Force-attaching to terminal...');
             } else {
                 vscode.window.showErrorMessage('No active terminal to attach to.');
             }

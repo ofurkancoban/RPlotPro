@@ -1,9 +1,23 @@
 # R Plot Pro Initialization Script
 # This script is automatically sourced by the VS Code extension
 
-# Stealth mode: Clear up to 6 lines of 'source(...)' command (Nuclear Stealth)
+# Professional Stealth: Minimal footprint with wrap-awareness
 if (interactive()) {
-    cat("\033[A\033[2K\033[A\033[2K\033[A\r\033[2C\033[K\r", sep = "")
+    len <- as.integer(Sys.getenv("VSC_R_PLOT_LEN", "0"))
+    if (is.finite(len) && len > 0) {
+        # Calculate exactly how many lines the command occupied
+        w <- getOption("width")
+        # ceiling(total characters / width) = number of lines
+        # We add a +2 safety margin to handle prompt variability and wrapping edge cases
+        lines <- ceiling(len / w) + 2
+        # Clear lines surgically
+        cat(rep("\x1b[A\x1b[2K", lines), "\r", sep = "")
+        flush.console()
+    } else {
+        # Fallback for old terminals
+        cat(rep("\x1b[A\x1b[2K", 3), "\r", sep = "")
+        flush.console()
+    }
 }
 
 local({

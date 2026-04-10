@@ -20,7 +20,7 @@ let lastCanvasData = new Map(); // Store base64 canvas data per plot ID
 // Annotation State
 let isAnnotating = false;
 let currentTool = 'pencil';
-let currentColor = '#ffffff';
+let currentColor = '#ff4757';
 let isDrawing = false;
 let activeCanvas = null;
 let activeCtx = null;
@@ -690,15 +690,17 @@ function updateCurrentPlot(plotId, plotUrl, port) {
                 plotImage.classList.add('changing');
                 const tempImg = new Image();
                 tempImg.onload = () => {
-                    plotImage.src = plotUrl;
-                    plotImage.classList.remove('changing');
-                    plotImage.style.display = 'block';
-                    if (wrapper) {
-                        wrapper.style.display = 'inline-block';
-                        updatePlotDimensions('mainMediaWrapper');
-                    }
-                    document.getElementById('emptyState').style.display = 'none';
-                    restoreAnnotation(pid, 'annotationCanvas');
+                    setTimeout(() => {
+                        plotImage.src = plotUrl;
+                        plotImage.classList.remove('changing');
+                        plotImage.style.display = 'block';
+                        if (wrapper) {
+                            wrapper.style.display = 'inline-block';
+                            updatePlotDimensions('mainMediaWrapper');
+                        }
+                        document.getElementById('emptyState').style.display = 'none';
+                        restoreAnnotation(pid, 'annotationCanvas');
+                    }, 100);
                 };
                 tempImg.src = plotUrl;
             }
@@ -1093,16 +1095,19 @@ function toggleZoom() {
         vscode.setState({ ...vscode.getState(), zoomLevel: newZoom });
     }
 
-    // Refresh annotation canvas if active
+    // Refresh annotations for visible canvases
+    if (isSplitMode) {
+        if (leftIndex >= 0) restoreAnnotation(plots[leftIndex].id, 'leftAnnotationCanvas');
+        if (rightIndex >= 0) restoreAnnotation(plots[rightIndex].id, 'rightAnnotationCanvas');
+    } else if (currentIndex >= 0 && plots[currentIndex]) {
+        restoreAnnotation(plots[currentIndex].id, 'annotationCanvas');
+    }
+
+    // Re-sync annotation context if active
     if (isAnnotating) {
         setupActiveCanvas();
-        const pid = isSplitMode ? 
-            (activePane === 'left' ? plots[leftIndex]?.id : plots[rightIndex]?.id) : 
-            plots[currentIndex]?.id;
-        if (pid) {
-            restoreAnnotation(pid, activeCanvas.id);
-        }
     }
+
     // Sync with backend for high-quality re-render if zoom affects perceived size
     setTimeout(() => sendResizeEvent(), 50);
 }
@@ -1131,15 +1136,17 @@ function toggleAspectRatio() {
     const isFixedAspect = newAspect !== 'auto' && newAspect !== 'fill';
     target.classList.toggle('has-aspect', isFixedAspect);
     
-    // Refresh annotation canvas if active
+    // Refresh annotations for visible canvases
+    if (isSplitMode) {
+        if (leftIndex >= 0) restoreAnnotation(plots[leftIndex].id, 'leftAnnotationCanvas');
+        if (rightIndex >= 0) restoreAnnotation(plots[rightIndex].id, 'rightAnnotationCanvas');
+    } else if (currentIndex >= 0 && plots[currentIndex]) {
+        restoreAnnotation(plots[currentIndex].id, 'annotationCanvas');
+    }
+
+    // Re-sync annotation context if active
     if (isAnnotating) {
         setupActiveCanvas();
-        const pid = isSplitMode ? 
-            (activePane === 'left' ? plots[leftIndex]?.id : plots[rightIndex]?.id) : 
-            plots[currentIndex]?.id;
-        if (pid) {
-            restoreAnnotation(pid, activeCanvas.id);
-        }
     }
 
     if (newAspect === 'auto') {
@@ -1361,7 +1368,11 @@ function sendResizeEvent() {
             }
 
             if (width > 50 && height > 50) {
-                const targetPort = plots[currentIndex] ? plots[currentIndex].port : null;
+                const targetPlot = isSplitMode 
+                    ? plots[activePane === 'left' ? leftIndex : rightIndex]
+                    : plots[currentIndex];
+                    
+                const targetPort = targetPlot ? targetPlot.port : null;
                 broadcastToBackends({ type: 'resize', width, height, plot_id: pid }, targetPort);
             }
         }
@@ -1971,14 +1982,7 @@ function setupActiveCanvas() {
             plots[currentIndex]?.id;
             
         if (pid) {
-            const savedData = lastCanvasData.get(String(pid));
-            if (savedData) {
-                const img = new Image();
-                img.onload = () => {
-                    activeCtx.drawImage(img, 0, 0);
-                };
-                img.src = savedData;
-            }
+            restoreAnnotation(pid, canvasId);
         }
         
         // Attach listeners if not already attached
@@ -2185,17 +2189,27 @@ function restoreAnnotation(plotId, canvasId) {
     
     // Always match size first
     const container = canvas.parentElement;
-    canvas.width = container.clientWidth;
-    canvas.height = container.clientHeight;
+    if (!container) return;
     
-    // ALWAYS clear before redrawing or if no data
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    
+    // Only update if dimensions actually changed or to force clear
+    canvas.width = w;
+    canvas.height = h;
+    
+    // ALWAYS clear before redrawing
+    ctx.clearRect(0, 0, w, h);
     
     const data = lastCanvasData.get(String(plotId));
     if (data) {
         const img = new Image();
+        canvas.pendingSource = data; // Prevent race conditions
         img.onload = () => {
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            if (canvas.pendingSource === data) {
+                ctx.drawImage(img, 0, 0, w, h);
+                delete canvas.pendingSource;
+            }
         };
         img.src = data;
     }
