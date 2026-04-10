@@ -24,7 +24,7 @@ Tired of switching between VS Code and external windows just to see your plots? 
 - ✅ **Julia Support** - Works with CairoMakie and Plots.jl.
 - ✅ **Side panel plot viewer** - Opens in the right sidebar, just like RStudio.
 - ✅ **Automatic plot capture** - Every plot you create appears instantly.
-- ✅ **Nuclear Stealth** - Zero initialization trace in your terminal.
+- ✅ **Silent Professional Stealth** - Zero initialization trace with dynamic, width-aware clearing.
 - ✅ **Modern UI** - Positron-inspired design with smooth animations.
 
 **No more context switching!** Work in VS Code with the plotting power of RStudio and the elegance of Positron.
@@ -36,8 +36,8 @@ Tired of switching between VS Code and external windows just to see your plots? 
 ### 🎨 **Real-Time Visualization**
 View your **R and Julia** plots **instantly** as they're generated in the terminal. No manual refresh or external windows needed.
 
-### 🕵️ **Nuclear Stealth Mode**
-Our initialization process is virtually invisible. It automatically wipes its own traces from your terminal console, leaving your workspace professional and distraction-free.
+### 🕵️ **Silent Professional Stealth**
+Our initialization process is virtually invisible. It automatically detects your terminal's width and calculates the exact number of lines occupied by the attachment command to perform a surgical wipe. This ensures your workspace remains professional and distraction-free, while perfectly preserving your R and Julia startup banners.
 
 ### 📊 **Advanced Plot Gallery**
 - **Thumbnail view** with timestamp and metadata
@@ -90,7 +90,7 @@ Our initialization process is virtually invisible. It automatically wipes its ow
 
 2. **Or install manually:**
    - Download the `.vsix` file
-   - Run: `code --install-extension r-plot-pro-0.0.1.vsix`
+   - Run: `code --install-extension r-plot-pro-0.12.12.vsix`
 
 ### First Use
 
@@ -219,6 +219,18 @@ This extension works out of the box with no configuration needed. Advanced users
 ---
 
 ## 🔄 Release Notes
+
+### 0.12.12 - The Silent Professional
+
+**The Ultimate Stealth & Performance Update**
+
+- **Dynamic Width-Aware Stealth:** Overhauled the terminal clearing logic. The extension now measures command length and terminal width to precisely wipe its own traces without affecting startup banners.
+- **Silent Julia Backend:** Removed all verbose debug and progress logs from the Julia REPL for a cleaner experience.
+- **Improved Attachment Timing:** Optimized R and Julia delays for perfect banner preservation on all systems.
+- **Bug Fixes:**
+  - Resolved double-injection race conditions in terminal attachment.
+  - Fixed `isinteractive()` compatibility issue in Julia.
+  - Improved terminal detection reliability for renamed terminals.
 
 ### 0.2.0 - Nuclear Stealth & Julia Integration
 
