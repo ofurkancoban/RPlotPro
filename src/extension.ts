@@ -107,7 +107,7 @@ export function activate(context: vscode.ExtensionContext) {
         context.workspaceState.update(configIdKey, configId);
     }
 
-    const uniqueConfigDir = path.join(os.tmpdir(), configId);
+    const uniqueConfigDir = path.join(os.tmpdir(), configId).replace(/\\/g, '/');
     if (!fs.existsSync(uniqueConfigDir)) {
         fs.mkdirSync(uniqueConfigDir, { recursive: true });
     }
@@ -167,17 +167,12 @@ export function activate(context: vscode.ExtensionContext) {
         context.subscriptions.push({ dispose: () => clearInterval(fallbackInterval) });
     }
 
-    // Legacy check removed as we moved to directory-based discovery
-    // and session-specific isolation.
-
     const config = vscode.workspace.getConfiguration('rPlotViewer');
     const autoAttach = config.get('autoAttach', true);
 
     if (autoAttach) {
-        const rSetupCmd = `source('${normalizedInitPath}')`;
-        const juliaSetupCmd = `include("${normalizedJlPath}")`;
         const injectedPids = new Set<number>();
-        const tryInject = async (terminal: vscode.Terminal, retryCount = 0, force = false) => {
+        const tryInject = async (terminal: vscode.Terminal, force = false) => {
             if (!terminal) return;
             
             let pid: number | undefined;
@@ -189,85 +184,76 @@ export function activate(context: vscode.ExtensionContext) {
             if (!pid) return;
 
             if (!force && injectedPids.has(pid)) return;
-            if (!force) injectedPids.add(pid);
-
+            
             const name = terminal.name;
             const shellPath = (terminal.creationOptions as any)?.shellPath || '';
             
-            outputChannel.appendLine(`[Scan #${retryCount}] Terminal: "${name}" | PID: ${pid} | Shell: ${shellPath}${force ? ' [FORCE]' : ''}`);
-
-            const isRTerminal = 
-                name === "R Interactive" || 
-                name === "R" || 
-                name.startsWith("R: ") || 
-                name.startsWith("R [") ||
-                name.startsWith("R (") ||
-                (/\bR\b/.test(name) && !/(Julia|Python|Node|IPython)/i.test(name) && !name.includes("zsh") && !name.includes("bash"));
-            
-            const isJuliaTerminal = 
-                /julia/i.test(name) || 
-                name === "Julia REPL" ||
-                name === "julia" ||
-                name.startsWith("julia (");
+            // Neural Precision: Match standalone keywords using word boundaries \b (Mac support)
+            const isRTerminal = /\b(r|r\.exe|rterm|r interactive)\b/i.test(name);
+            const isJuliaTerminal = /\b(julia|julialauncher)\b/i.test(name);
     
-            if (isRTerminal) {
+            const sanitizePath = (p: string) => p.replace(/\\/g, '/');
+
+            // Atomic R Injection
+            if (isRTerminal && !injectedPids.has(pid)) {
+                injectedPids.add(pid);
+                outputChannel.appendLine(`[Sentinel] Attaching to R: "${name}" | PID: ${pid}`);
+
                 setTimeout(() => {
-                    const rInner = `Sys.setenv(VSCODE_R_PLOT_CONFIG='${uniqueConfigDir}'); source(if(Sys.getenv('VSC_R_PLOT_INIT') != '') Sys.getenv('VSC_R_PLOT_INIT') else '${normalizedInitPath}')`;
-                    const totalLen = 2 + rInner.length + 30; // 2 for "> ", 30 for VSC_R_PLOT_LEN prefix
-                    terminal.sendText(`Sys.setenv(VSC_R_PLOT_LEN=${totalLen}); ${rInner}`, true);
+                    // Nano-Path: Use /tmp on Unix for shorter commands (prevents wrapping)
+                    const bootDir = (os.platform() !== 'win32' && fs.existsSync('/tmp')) ? '/tmp' : os.tmpdir();
+                    const rBootPath = path.join(bootDir, 'r.R');
+                    const rBootContent = `Sys.setenv(VSCODE_R_PLOT_CONFIG=path.expand('${sanitizePath(uniqueConfigDir)}')); script_dir <- path.expand('${sanitizePath(path.dirname(normalizedInitPath))}'); source(file.path(script_dir, 'init.R'))`;
+                    fs.writeFileSync(rBootPath, rBootContent);
+
+                    // v0.38.0: External wipe removed (now handled internally by init.R)
+                    const rCmd = `source("${sanitizePath(rBootPath)}")`;
+                    terminal.sendText(rCmd, true);
                 }, 3000);
-            } else if (isJuliaTerminal) {
-                // Wait for Julia REPL to be ready (Julia can be slow to start)
+            }
+            
+            // Atomic Julia Injection
+            if (isJuliaTerminal && !injectedPids.has(pid)) {
+                injectedPids.add(pid);
+                outputChannel.appendLine(`[Sentinel] Precise Attachment (Julia) | PID: ${pid}`);
+
                 setTimeout(() => {
-                    const jlInner = `ENV["VSCODE_R_PLOT_CONFIG"] = "${uniqueConfigDir}"; include(get(ENV, "VSC_JL_PLOT_INIT", "${normalizedJlPath}"))`;
-                    const totalLen = 7 + jlInner.length + 30; // 7 for "julia> ", 30 for VSC_JL_PLOT_LEN prefix
-                    terminal.sendText(`ENV["VSC_JL_PLOT_LEN"] = ${totalLen}; ${jlInner}`, true);
+                    const bootDir = (os.platform() !== 'win32' && fs.existsSync('/tmp')) ? '/tmp' : os.tmpdir();
+                    const jlBootPath = path.join(bootDir, 'j.jl');
+                    const jlBootContent = `ENV["VSCODE_R_PLOT_CONFIG"]="${sanitizePath(uniqueConfigDir)}"; include("${sanitizePath(normalizedJlPath)}")`;
+                    fs.writeFileSync(jlBootPath, jlBootContent);
+
+                    // v0.38.0: External wipe removed (now handled internally by init.jl)
+                    const jlCmd = `include("${sanitizePath(jlBootPath)}")`;
+                    terminal.sendText(jlCmd, true);
                 }, 2500);
-            } else {
-                // If it's a generic terminal name, it might be renamed later (VS Code behavior)
-                const isGeneric = /^(zsh|bash|sh|cmd|powershell|pwsh|Task)$/i.test(name);
-                if (isGeneric && retryCount < 5) {
-                    const delay = retryCount === 0 ? 1500 : 3000;
-                    outputChannel.appendLine(` >> Generic "${name}" detected. Retrying in ${delay}ms (Attempt ${retryCount + 1}/5)...`);
-                    setTimeout(() => {
-                        tryInject(terminal, retryCount + 1);
-                    }, delay);
-                }
             }
         };
-    
-        if (vscode.window.activeTerminal) {
-            tryInject(vscode.window.activeTerminal);
-        }
-    
+
+        // Continuous Sentinel: Scans all terminals every 4s to catch delayed session starts (Mac/zsh)
+        const sentinel = setInterval(() => {
+            vscode.window.terminals.forEach(term => tryInject(term));
+        }, 4000);
+        context.subscriptions.push({ dispose: () => clearInterval(sentinel) });
+
+        // Immediate triggers for better UX
+        if (vscode.window.activeTerminal) tryInject(vscode.window.activeTerminal);
+
         context.subscriptions.push(vscode.window.onDidOpenTerminal(term => {
-            outputChannel.appendLine(`New terminal opened: "${term.name}". Initial scan in 3s...`);
-            setTimeout(() => tryInject(term), 3000);
+            setTimeout(() => tryInject(term), 2000);
         }));
-    
-        // Re-check terminal when focus changes, as shells often rename themselves on interaction
+
         context.subscriptions.push(vscode.window.onDidChangeActiveTerminal(term => {
-            if (term) {
-                // We only log if it's a potential candidate to keep output clean
-                const name = term.name;
-                const isPotential = name === 'R Interactive' || name === 'R' || name === 'julia' || /^(zsh|bash|sh|cmd|powershell|pwsh|Task)$/i.test(name);
-                if (isPotential) {
-                    tryInject(term);
-                }
-            }
+            if (term) tryInject(term);
         }));
-    
+
         context.subscriptions.push(vscode.commands.registerCommand('rPlotViewer.attach', () => {
             if (vscode.window.activeTerminal) {
-                outputChannel.appendLine(`Manual attach requested for: "${vscode.window.activeTerminal.name}"`);
-                tryInject(vscode.window.activeTerminal, 0, true);
+                tryInject(vscode.window.activeTerminal, true);
                 vscode.window.showInformationMessage('R Plot Pro: Force-attaching to terminal...');
-            } else {
-                vscode.window.showErrorMessage('No active terminal to attach to.');
             }
         }));
 
-        // Focus the view on activation for maximum visibility
         vscode.commands.executeCommand('workbench.action.focusPanel');
         vscode.commands.executeCommand('rPlotViewer.mainView.focus');
     }
