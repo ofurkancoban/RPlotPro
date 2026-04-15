@@ -1,28 +1,21 @@
 # R Plot Pro Initialization Script
 # This script is automatically sourced by the VS Code extension
 
-# Professional Stealth: Minimal footprint with wrap-awareness
-if (interactive()) {
-    len <- as.integer(Sys.getenv("VSC_R_PLOT_LEN", "0"))
-    if (is.finite(len) && len > 0) {
-        # Calculate exactly how many lines the command occupied
-        w <- getOption("width")
-        # ceiling(total characters / width) = number of lines
-        # We add a +2 safety margin to handle prompt variability and wrapping edge cases
-        lines <- ceiling(len / w) + 2
-        # Clear lines surgically
-        cat(rep("\x1b[A\x1b[2K", lines), "\r", sep = "")
-        flush.console()
-    } else {
-        # Fallback for old terminals
-        cat(rep("\x1b[A\x1b[2K", 3), "\r", sep = "")
-        flush.console()
-    }
-}
+# Professional Stealth: Mirror Mode (Total Silence)
+# All custom header/logo reconstruction has been removed to preserve native aesthetics.
+
+
+# v0.38.0 Internal Wipe
+cat("\r\x1b[A\x1b[K")
 
 local({
     # Get the directory of this script
-    script_dir <- dirname(sys.frame(1)$ofile)
+    # Ghost Protocol (v0.28.0): Check if script_dir was passed from GlobalEnv
+    if (exists("script_dir", envir = .GlobalEnv)) {
+        script_dir <- get("script_dir", envir = .GlobalEnv)
+    } else {
+        script_dir <- dirname(sys.frame(1)$ofile)
+    }
 
     # Enable source preservation for better code highlighting
     # options(keep.source = TRUE, keep.source.pkgs = TRUE) # Removed as per cleanup
