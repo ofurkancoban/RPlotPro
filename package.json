@@ -1,8 +1,8 @@
 {
   "name": "r-plot-pro",
   "displayName": "R Plot Pro",
-  "description": "The ultimate R visualization experience for VS Code. High-performance, real-time, and designed for professionals who demand the best of RStudio and Positron.",
-  "version": "0.13.0",
+  "description": "The ultimate R and Julia visualization experience for VS Code. High-performance, real-time, and designed for professionals who demand the best of RStudio and Positron.",
+  "version": "0.40.0",
   "license": "MIT",
   "publisher": "ofurkancoban",
   "icon": "assets/icon.png",
@@ -21,7 +21,8 @@
     "*"
   ],
   "extensionDependencies": [
-    "REditorSupport.r"
+    "REditorSupport.r",
+    "julialang.language-julia"
   ],
   "main": "./out/extension.js",
   "contributes": {
