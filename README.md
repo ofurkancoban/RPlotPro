@@ -250,6 +250,15 @@ This extension works out of the box with no configuration needed. Advanced users
 
 ## 🔄 Release Notes
 
+### 0.40.0 - Registry Distinction
+
+**Branding Separation & Dynamic Metrics Integration**
+
+- **Registry Distinction:** Overhauled the README header to clearly separate the **Visual Studio Marketplace** and **Open VSX Registry** platforms.
+- **Dynamic Metrics:** Integrated live download counts from Open VSX, providing real-time adoption metrics.
+- **Stable Marketplace Display:** Implemented high-reliability static badges for the VS Code Marketplace to bypass the retired dynamic Shields.io API.
+- **Layout Modernization:** Reorganized the registry links into a clean, professional table for easier access and clarity.
+
 ### 0.39.0 - Onboarding & Ecosystem Integration
 
 **Professional Documentation & Dependency Overhaul**
