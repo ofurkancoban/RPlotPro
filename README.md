@@ -10,9 +10,11 @@ pot# R Plot Pro
 </p>
 
 <p align="center">
-  <a href="https://marketplace.visualstudio.com/items?itemName=ofurkancoban.r-plot-pro"><img src="https://img.shields.io/visual-studio-marketplace/v/ofurkancoban.r-plot-pro?style=flat-square&label=VS%20Code%20Marketplace&logo=visual-studio-code" alt="VS Code Marketplace"></a>
-  <a href="https://marketplace.visualstudio.com/items?itemName=ofurkancoban.r-plot-pro"><img src="https://img.shields.io/visual-studio-marketplace/d/ofurkancoban.r-plot-pro?style=flat-square" alt="Downloads"></a>
-  <a href="https://marketplace.visualstudio.com/items?itemName=ofurkancoban.r-plot-pro"><img src="https://img.shields.io/visual-studio-marketplace/r/ofurkancoban.r-plot-pro?style=flat-square" alt="Rating"></a>
+  <a href="https://open-vsx.org/extension/ofurkancoban/r-plot-pro"><img src="https://img.shields.io/open-vsx/dt/ofurkancoban/r-plot-pro?style=for-the-badge" alt="Open VSX Downloads"></a>
+  <img src="https://img.shields.io/badge/Version-0.40.0-green?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Installs-1k+-blue?style=for-the-badge" alt="Installs">
+  <img src="https://img.shields.io/badge/License-MIT-orange?style=for-the-badge" alt="License">
+  <a href="https://marketplace.visualstudio.com/items?itemName=ofurkancoban.r-plot-pro"><img src="https://img.shields.io/badge/Marketplace-ofurkancoban-blue?style=for-the-badge&logo=visual-studio-code" alt="VS Code Marketplace"></a>
 </p>
 
 ---
@@ -20,62 +22,80 @@ pot# R Plot Pro
 Tired of switching between VS Code and external windows just to see your plots? **R Plot Pro** brings the **familiar RStudio Plots pane**, **Positron's modern experience**, and **traceless Julia plotting** directly into VS Code.
 
 ### Multi-Language Power:
+
 - ✅ **R Support** - Works with Base R and ggplot2.
 - ✅ **Julia Support** - Works with CairoMakie and Plots.jl.
 - ✅ **Side panel plot viewer** - Opens in the right sidebar, just like RStudio.
 - ✅ **Automatic plot capture** - Every plot you create appears instantly.
-- ✅ **Silent Professional Stealth** - Zero initialization trace with dynamic, width-aware clearing.
-- ✅ **Modern UI** - Positron-inspired design with smooth animations.
+- ✅ **Silent Professional Stealth** - Zero initialization trace with **Internal Mirror** technology.
+- ✅ **Native Banner Preservation** - 100% preservation of R and Julia startup logos.
 
 **No more context switching!** Work in VS Code with the plotting power of RStudio and the elegance of Positron.
 
 ---
 
-## ✨ Features
+## 🛠️ Setup & Installation
 
-### 🎨 **Real-Time Visualization**
-View your **R and Julia** plots **instantly** as they're generated in the terminal. No manual refresh or external windows needed.
+To get the most out of **R Plot Pro**, please ensure your environment is set up correctly.
 
-### 🕵️ **Silent Professional Stealth**
-Our initialization process is virtually invisible. It automatically detects your terminal's width and calculates the exact number of lines occupied by the attachment command to perform a surgical wipe. This ensures your workspace remains professional and distraction-free, while perfectly preserving your R and Julia startup banners.
+### **1. R Users**
 
-### 📊 **Advanced Plot Gallery**
-- **Thumbnail view** with timestamp and metadata
-- **Drag-and-drop** plot reordering
-- **Favorites system** to mark important plots
-- **Filter** to show only favorited plots
-- **Notes** for documenting your analysis
+- **R Installation:** Download from [CRAN](https://cran.r-project.org/).
+- **VS Code Extension:** Install [vscode-R](https://marketplace.visualstudio.com/items?itemName=REditorSupport.r) (Required dependency).
+- **Initialization:** R Plot Pro attaches automatically to any terminal running an R session.
 
-### 🎯 **Interactive Navigation**
-- Navigate plots with **arrow keys** or navigation buttons
-- **Fullscreen mode** for detailed inspection
-- **Smooth transitions** between plots
-- Auto-scroll active plot into view
+### **2. Julia Users**
 
-### 🎛️ **Flexible Layouts**
-- **Auto-sizing** - plots adapt to window size
-- **Aspect ratio control** - square, landscape, portrait, or fill
-- **Zoom controls** - 50% to 200% with fit-to-screen option
-- **Sidebar toggle** for maximum plot space
+- **Julia Installation:** We recommend using [Juliaup](https://github.com/JuliaLang/juliaup) for easy version management.
+- **VS Code Extension:** Install the official [Julia extension](https://marketplace.visualstudio.com/items?itemName=julialang.language-julia) (Automatic dependency).
+- **Core Packages:** Ensure you have a supported plotting backend installed:
+  ```julia
+  using Pkg
+  Pkg.add(["CairoMakie", "Plots"]) # Choose your preferred backend
+  ```
 
-### 💾 **Export & Organization**
-- **Drag plots** directly to desktop/finder to save
-- **Notes** on each plot for documentation
-- **Plot history** - keeps last 200 plots
-- **Memory optimized** - automatic cleanup
+---
 
-### 🎭 **Beautiful UI**
-- **Dark mode** support (auto-detects VS Code theme)
-- **Smooth animations** and transitions
-- **Modern design** with glassmorphism effects
-- **Responsive** interface
-- **Split View** support with independent controls
+## 🖥️ VS Code Terminal Configuration
 
-### ✍️ **Annotations**
-- **Draw** on plots with freehand tools
-- **Highlight** important data points
-- **Values preserved** when exporting or copying
-- **Undo/Redo** support for annotations
+For the best experience, we recommend adding Julia/R as custom terminal profiles.
+
+### **Adding Julia to Terminal Profiles (Mac)**
+
+Add this to your `settings.json`:
+
+```json
+"terminal.integrated.profiles.osx": {
+    "Julia": {
+        "path": "julia",
+        "icon": "terminal-julia"
+    }
+}
+```
+
+### **Adding Julia to Terminal Profiles (Windows)**
+
+```json
+"terminal.integrated.profiles.windows": {
+    "Julia": {
+        "path": "julia.exe",
+        "icon": "terminal-julia"
+    }
+}
+```
+
+---
+
+## 🕵️ Auto-Detection Logic (The Sentinel)
+
+R Plot Pro features a **Continuous Sentinel** that scans your integrated terminals every 4 seconds. It looks for the following keywords to trigger the silent attachment:
+
+| Language        | Keywords (Regex)                               |
+| --------------- | ---------------------------------------------- |
+| **R**     | `r`, `r.exe`, `rterm`, `R Interactive` |
+| **Julia** | `julia`, `julialauncher`, `julia.exe`    |
+
+> **Note:** On Mac/Linux, if you open a `zsh` or `bash` terminal and then type `julia`, the Sentinel will detect the name change and attach automatically within seconds.
 
 ---
 
@@ -84,19 +104,20 @@ Our initialization process is virtually invisible. It automatically detects your
 ### Installation
 
 1. **Install from Marketplace:**
+
    ```
    ext install ofurkancoban.r-plot-pro
    ```
-
 2. **Or install manually:**
+
    - Download the `.vsix` file
-   - Run: `code --install-extension r-plot-pro-0.12.12.vsix`
+   - Run: `code --install-extension r-plot-pro-0.40.0.vsix`
 
 ### First Use
 
 1. **Open an R or Julia file** in VS Code
 2. **Run code** in the integrated terminal
-3. **Plot viewer opens automatically** in the **right sidebar panel** when you create your first plot
+3. **Plot viewer opens automatically** when you create your first plot
 4. The viewer stays open and updates in real-time as you create more plots
 5. **Start plotting!** 🎉
 
@@ -127,22 +148,24 @@ f # Plot is captured instantly
 
 ### Keyboard Shortcuts
 
-| Shortcut | Action |
-|----------|--------|
-| `Cmd/Ctrl + →` | Next plot |
-| `Cmd/Ctrl + ←` | Previous plot |
-| `Space` | Toggle fullscreen |
-| `Esc` | Exit fullscreen |
+| Shortcut          | Action            |
+| ----------------- | ----------------- |
+| `Cmd/Ctrl + →` | Next plot         |
+| `Cmd/Ctrl + ←` | Previous plot     |
+| `Space`         | Toggle fullscreen |
+| `Esc`           | Exit fullscreen   |
 
 ### UI Controls
 
 **Top Toolbar:**
+
 - **Navigation** - Previous/Next plot buttons
 - **Zoom** - 50%, 75%, 100%, 150%, 200%, Fit
 - **Layout** - Aspect ratio control (auto, square, landscape, portrait, fill)
 - **Clear All** - Remove all plots
 
 **Plot Thumbnail Actions:**
+
 - **Click** - View plot
 - **Star icon** - Mark as favorite
 - **Note icon** - Add/edit note
@@ -157,27 +180,30 @@ f # Plot is captured instantly
 - **R** 4.0.0 or higher (for R users)
 - **Julia** 1.9.0 or higher (for Julia users)
 
-
 ---
 
 ## 📋 Features in Detail
 
 ### Plot Memory Management
+
 - Automatically keeps last **200 plots**
 - Oldest plots removed when limit reached
 - Optimized memory usage (~100MB for 200 plots)
 
 ### Export Options
+
 - **Drag-and-drop** to desktop (saves as PNG)
 - High-resolution output
 - Preserves aspect ratio
 
 ### Notes & Documentation
+
 - Add notes to any plot
 - Notes saved in VS Code state
 - Perfect for documenting analysis steps
 
 ### Favorites
+
 - Star important plots
 - Filter view to show only favorites
 - Never lose track of key visualizations
@@ -187,15 +213,19 @@ f # Plot is captured instantly
 ## 🎯 Use Cases
 
 ### Data Exploration
+
 Quickly iterate through different visualizations while keeping a history of all attempts.
 
 ### Presentation Prep
+
 Mark your best plots as favorites, add notes, and easily export for slides.
 
 ### Collaborative Analysis
+
 Document your plotting process with notes for team members.
 
 ### Teaching
+
 Show students the progression of plot improvements with before/after comparisons.
 
 ---
@@ -220,19 +250,26 @@ This extension works out of the box with no configuration needed. Advanced users
 
 ## 🔄 Release Notes
 
-### 0.12.12 - The Silent Professional
+### 0.39.0 - Onboarding & Ecosystem Integration
 
-**The Ultimate Stealth & Performance Update**
+**Professional Documentation & Dependency Overhaul**
 
-- **Dynamic Width-Aware Stealth:** Overhauled the terminal clearing logic. The extension now measures command length and terminal width to precisely wipe its own traces without affecting startup banners.
-- **Silent Julia Backend:** Removed all verbose debug and progress logs from the Julia REPL for a cleaner experience.
-- **Improved Attachment Timing:** Optimized R and Julia delays for perfect banner preservation on all systems.
-- **Bug Fixes:**
-  - Resolved double-injection race conditions in terminal attachment.
-  - Fixed `isinteractive()` compatibility issue in Julia.
-  - Improved terminal detection reliability for renamed terminals.
+- **Ecosystem Integration:** Added `julialang.language-julia` as a formal extension dependency to ensure a seamless out-of-the-box experience for Julia users.
+- **Comprehensive Onboarding:** Redesigned the README with a detailed "Setup & Installation" guide covering R (Base, vscode-R) and Julia (Juliaup, Makie, Plots.jl).
+- **Terminal Profile Guide:** Added a dedicated section explaining how to configure Julia/R as custom VS Code terminal profiles for maximum efficiency.
+- **Sentinel Transparency:** Detailed the technical logic behind the "Continuous Sentinel" system, explaining which keywords trigger the automatic attachment.
+- **Badge Update:** Modernized marketplace and license badges for a premium professional appearance.
 
-### 0.2.0 - Nuclear Stealth & Julia Integration
+### 0.38.0 - Internal Mirror Protocol
+
+**The Ultimate Stealth & Banner Preservation Update**
+
+- **Internal Surgical Wipe:** Relocated the ANSI wipe logic directly into the `init.R` and `init.jl` bootstrap scripts.
+- **100% Banner Integrity:** Eliminated the "Banner Clipping" issue by using internal process-aware cleanup. Native R/Julia logos and help text now remain perfectly intact.
+- **Nano-Path Optimization:** Switched to system-level short paths (`/tmp`) on Unix systems to minimize command length and prevent terminal wrapping.
+- **Conflict Resolution:** Fixed a logic bug where R terminals could accidentally trigger Julia injection.
+
+### 0.32.0 - Phantom Mirror Stealth
 
 **The Biggest Update Yet!**
 
@@ -240,7 +277,7 @@ This extension works out of the box with no configuration needed. Advanced users
   - Supports **CairoMakie** and **Plots.jl (GR)**.
   - Intercepts all `display()` calls to route plots directly to the extension.
   - Suppresses external PNG/SVG windows for a distraction-free experience.
-- **Nuclear Stealth Mode:** 
+- **Nuclear Stealth Mode:**
   - Trace-free terminal initialization for both R and Julia.
   - Automatically wipes the `source()` or `include()` command from the terminal buffer using advanced ANSI sequences.
   - Works even on narrow terminals with wrapped paths (up to 6 lines cleared).
@@ -328,6 +365,7 @@ This extension works out of the box with no configuration needed. Advanced users
 ### 0.0.52 - Split View & UI Refinements
 
 **New Features:**
+
 - **Enhanced Split View:**
   - **Side-by-Side Export:** Saving or copying in split mode now captures both plots combined.
   - **Real-time Resizing:** Draggable splitter with smooth plot resizing.
@@ -344,6 +382,7 @@ This extension works out of the box with no configuration needed. Advanced users
 ### 0.0.1 - Initial Release
 
 **Features:**
+
 - Real-time plot visualization
 - Advanced plot gallery with thumbnails
 - Favorites and notes system
@@ -352,6 +391,7 @@ This extension works out of the box with no configuration needed. Advanced users
 - Dark mode support
 
 **Bug Fixes:**
+
 - Fixed WebSocket timing issues
 - Improved error handling
 - Optimized resize events
