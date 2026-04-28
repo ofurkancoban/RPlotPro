@@ -1,4 +1,4 @@
-pot# R Plot Pro
+# R Plot Pro
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/ofurkancoban/RPlotPro/refs/heads/main/assets/icon.png" width="250" alt="R Plot Pro Logo">
@@ -11,7 +11,7 @@ pot# R Plot Pro
 
 <p align="center">
   <a href="https://open-vsx.org/extension/ofurkancoban/r-plot-pro"><img src="https://img.shields.io/open-vsx/dt/ofurkancoban/r-plot-pro?style=for-the-badge" alt="Open VSX Downloads"></a>
-  <img src="https://img.shields.io/badge/Version-0.40.0-green?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-0.45.0-green?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/Installs-1k+-blue?style=for-the-badge" alt="Installs">
   <img src="https://img.shields.io/badge/License-MIT-orange?style=for-the-badge" alt="License">
   <a href="https://marketplace.visualstudio.com/items?itemName=ofurkancoban.r-plot-pro"><img src="https://img.shields.io/badge/Marketplace-ofurkancoban-blue?style=for-the-badge&logo=visual-studio-code" alt="VS Code Marketplace"></a>
@@ -27,7 +27,9 @@ Tired of switching between VS Code and external windows just to see your plots? 
 - ✅ **Julia Support** - Works with CairoMakie and Plots.jl.
 - ✅ **Side panel plot viewer** - Opens in the right sidebar, just like RStudio.
 - ✅ **Automatic plot capture** - Every plot you create appears instantly.
+- ✅ **Universal Capture Engine** - Supports both Base R and ggplot2 automatically.
 - ✅ **Silent Professional Stealth** - Zero initialization trace with **Internal Mirror** technology.
+- ✅ **Invisible Background Rendering** - No more focus-stealing external windows (Quartz/X11).
 - ✅ **Native Banner Preservation** - 100% preservation of R and Julia startup logos.
 
 **No more context switching!** Work in VS Code with the plotting power of RStudio and the elegance of Positron.
@@ -249,6 +251,17 @@ This extension works out of the box with no configuration needed. Advanced users
 ---
 
 ## 🔄 Release Notes
+
+### 0.45.0 - Universal Capture Engine & GIS Stability
+
+**The "Master Fix" for Professional R Workflows**
+
+- **Universal Plot Capture:** Re-enabled and optimized throttled task callbacks. Now captures ALL plot types (Base R, Lattice, Maps) in addition to ggplot2.
+- **Invisible Background Rendering:** Implemented a non-focus-stealing PDF null device. No more external OS windows (Quartz on Mac, X11 on Linux) popping up during analysis.
+- **GIS & Heavy Data Optimization:** Specifically tuned for memory-intensive packages like `terra`, `sf`, and `blackmarbler`.
+- **Manual Capture Helper:** Added `.vsc_rplot$capture()` command to manually force a plot refresh in the webview.
+- **Robust ggplot2 Tracing:** Fixed a namespace conflict that prevented ggplot2 capture in some environments.
+- **Performance Throttling:** Smart 500ms refresh window to prevent UI freezing during rapid plotting.
 
 ### 0.40.0 - Registry Distinction
 
