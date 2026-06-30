@@ -3,6 +3,79 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 
+const RPROFILE_MARKER_START = '# [R Plot Pro]';
+const RPROFILE_MARKER_END   = '# [R Plot Pro END]';
+const RPROFILE_SNIPPET = `${RPROFILE_MARKER_START}
+local({i<-Sys.getenv("RPLOT_PRO_INIT");if(nzchar(i)&&file.exists(i))source(i)})
+${RPROFILE_MARKER_END}`;
+
+function getRprofilePath(): string {
+    return path.join(os.homedir(), '.Rprofile');
+}
+
+function isRprofileIntegrated(): boolean {
+    const rp = getRprofilePath();
+    if (!fs.existsSync(rp)) return false;
+    return fs.readFileSync(rp, 'utf8').includes(RPROFILE_MARKER_START);
+}
+
+function addToRprofile(): void {
+    const rp = getRprofilePath();
+    const existing = fs.existsSync(rp) ? fs.readFileSync(rp, 'utf8') : '';
+    // Avoid duplicate if somehow already there
+    if (existing.includes(RPROFILE_MARKER_START)) return;
+    const separator = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+    fs.writeFileSync(rp, existing + separator + '\n' + RPROFILE_SNIPPET + '\n', 'utf8');
+}
+
+function removeFromRprofile(): boolean {
+    const rp = getRprofilePath();
+    if (!fs.existsSync(rp)) return false;
+    const content = fs.readFileSync(rp, 'utf8');
+    if (!content.includes(RPROFILE_MARKER_START)) return false;
+    // Remove the block including surrounding blank lines
+    const cleaned = content
+        .replace(new RegExp(`\\n?${RPROFILE_MARKER_START}[\\s\\S]*?${RPROFILE_MARKER_END}\\n?`, 'g'), '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trimEnd();
+    fs.writeFileSync(rp, cleaned + '\n', 'utf8');
+    return true;
+}
+
+async function setupRprofileIntegration(context: vscode.ExtensionContext): Promise<void> {
+    // Already integrated — nothing to do
+    if (isRprofileIntegrated()) return;
+
+    // User previously said "Don't ask"
+    if (context.globalState.get<boolean>('rprofile.declined')) return;
+
+    const answer = await vscode.window.showInformationMessage(
+        'R Plot Pro: Add a one-line hook to ~/.Rprofile so plots are captured instantly when R starts — no timing gaps, works like Positron.',
+        { modal: false },
+        'Add to .Rprofile',
+        "Don't ask again"
+    );
+
+    if (answer === 'Add to .Rprofile') {
+        try {
+            addToRprofile();
+            vscode.window.showInformationMessage(
+                'R Plot Pro: ~/.Rprofile updated. Restart R terminals to activate instant capture.',
+                'Open .Rprofile'
+            ).then(btn => {
+                if (btn === 'Open .Rprofile') {
+                    vscode.window.showTextDocument(vscode.Uri.file(getRprofilePath()));
+                }
+            });
+        } catch (e: any) {
+            vscode.window.showErrorMessage('R Plot Pro: Could not write ~/.Rprofile — ' + e.message);
+        }
+    } else if (answer === "Don't ask again") {
+        context.globalState.update('rprofile.declined', true);
+    }
+    // undefined = dismissed → ask again next time
+}
+
 export function activate(context: vscode.ExtensionContext) {
     // Create diagnostic output channel
     const outputChannel = vscode.window.createOutputChannel("R Plot Pro");
@@ -110,6 +183,14 @@ export function activate(context: vscode.ExtensionContext) {
     const uniqueConfigDir = path.join(os.tmpdir(), configId).replace(/\\/g, '/');
     if (!fs.existsSync(uniqueConfigDir)) {
         fs.mkdirSync(uniqueConfigDir, { recursive: true });
+    } else {
+        // Remove stale port files left by previous R sessions so getBackends()
+        // starts at zero and the injection guard doesn't fire prematurely.
+        try {
+            for (const f of fs.readdirSync(uniqueConfigDir)) {
+                if (f.endsWith('.json')) fs.unlinkSync(path.join(uniqueConfigDir, f));
+            }
+        } catch (_) {}
     }
 
     const initRPath = path.join(context.extensionPath, 'init.R');
@@ -120,50 +201,46 @@ export function activate(context: vscode.ExtensionContext) {
     context.environmentVariableCollection.replace('VSCODE_R_PLOT_CONFIG', uniqueConfigDir);
     context.environmentVariableCollection.replace('VSC_R_PLOT_INIT', normalizedInitPath);
     context.environmentVariableCollection.replace('VSC_JL_PLOT_INIT', normalizedJlPath);
+    // Used by .Rprofile hook to source init.R at R startup (zero timing gap)
+    context.environmentVariableCollection.replace('RPLOT_PRO_INIT', normalizedInitPath);
 
     plotProvider.setSessionConfigPath(uniqueConfigDir);
 
-    const discoverPorts = (configDir: string) => {
-        try {
-            if (fs.existsSync(configDir) && fs.statSync(configDir).isDirectory()) {
-                const files = fs.readdirSync(configDir);
-                const backends: { port: number, language?: string }[] = [];
-                for (const file of files) {
-                    if (file.endsWith('.json')) {
-                        try {
-                            const content = fs.readFileSync(path.join(configDir, file), 'utf8');
-                            const config = JSON.parse(content);
-                            if (config.port) {
-                                backends.push({ 
-                                    port: config.port, 
-                                    language: config.language 
-                                });
-                            }
-                        } catch (e) { /* skip malformed */ }
-                    }
-                }
-                if (backends.length > 0) {
-                    plotProvider.postMessage({ command: 'set_ports', backends: backends });
-                }
+    // .Rprofile integration — ask user once, silently skip if already done
+    setupRprofileIntegration(context);
+
+    // Remove-from-.Rprofile command (accessible via Command Palette)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('rPlotViewer.removeFromRprofile', () => {
+            if (removeFromRprofile()) {
+                vscode.window.showInformationMessage('R Plot Pro: Removed hook from ~/.Rprofile.');
+                context.globalState.update('rprofile.declined', false); // re-enable future prompts
+            } else {
+                vscode.window.showInformationMessage('R Plot Pro: No hook found in ~/.Rprofile.');
             }
-        } catch (e) {
-            console.error('Error discovering plot ports:', e);
+        })
+    );
+
+    const discoverPorts = () => {
+        const backends = plotProvider.getBackends();
+        if (backends.length > 0) {
+            plotProvider.postMessage({ command: 'set_ports', backends });
         }
     };
 
     // Initial check
-    setTimeout(() => discoverPorts(uniqueConfigDir), 500);
+    setTimeout(() => discoverPorts(), 500);
 
     // Watch the temp config directory for changes
     try {
         const fsWatcher = fs.watch(uniqueConfigDir, (_eventType, _filename) => {
-            discoverPorts(uniqueConfigDir);
+            discoverPorts();
         });
         context.subscriptions.push({ dispose: () => fsWatcher.close() });
     } catch (e) {
         console.error('Failed to watch temp config dir:', e);
         // Fallback to minimal polling
-        const fallbackInterval = setInterval(() => discoverPorts(uniqueConfigDir), 5000);
+        const fallbackInterval = setInterval(() => discoverPorts(), 5000);
         context.subscriptions.push({ dispose: () => clearInterval(fallbackInterval) });
     }
 
@@ -209,9 +286,9 @@ export function activate(context: vscode.ExtensionContext) {
                     // v0.38.0: External wipe removed (now handled internally by init.R)
                     const rCmd = `source("${sanitizePath(rBootPath)}")`;
                     terminal.sendText(rCmd, true);
-                }, 3000);
+                }, 1000);
             }
-            
+
             // Atomic Julia Injection
             if (isJuliaTerminal && !injectedPids.has(pid)) {
                 injectedPids.add(pid);
@@ -346,59 +423,30 @@ class PlotViewProvider implements vscode.WebviewViewProvider {
         });
     }
 
-    private checkAndSendConfig() {
+    public getBackends(): { port: number, language?: string }[] {
+        if (!this.sessionConfigPath) return [];
         try {
-            if (this.sessionConfigPath && fs.existsSync(this.sessionConfigPath) && fs.statSync(this.sessionConfigPath).isDirectory()) {
-                const files = fs.readdirSync(this.sessionConfigPath);
-                const backends: { port: number, language?: string }[] = [];
-                for (const file of files) {
-                    if (file.endsWith('.json')) {
-                        try {
-                            const content = fs.readFileSync(path.join(this.sessionConfigPath, file), 'utf8');
-                            const config = JSON.parse(content);
-                            if (config.port) {
-                                backends.push({ 
-                                    port: config.port, 
-                                    language: config.language 
-                                });
-                            }
-                        } catch (e) { /* skip */ }
-                    }
-                }
-                if (backends.length > 0) {
-                    this.postMessage({ command: 'set_ports', backends: backends });
-                }
+            if (!fs.existsSync(this.sessionConfigPath) || !fs.statSync(this.sessionConfigPath).isDirectory()) return [];
+            const backends: { port: number, language?: string }[] = [];
+            for (const file of fs.readdirSync(this.sessionConfigPath)) {
+                if (!file.endsWith('.json')) continue;
+                try {
+                    const config = JSON.parse(fs.readFileSync(path.join(this.sessionConfigPath, file), 'utf8'));
+                    if (config.port) backends.push({ port: config.port, language: config.language });
+                } catch (e) { /* skip malformed */ }
             }
+            return backends;
         } catch (e) {
-            console.error('Error reading plot ports on request:', e);
+            console.error('Error reading plot ports:', e);
+            return [];
         }
     }
 
-    public getBackends(): { port: number, language?: string }[] {
-        try {
-            if (this.sessionConfigPath && fs.existsSync(this.sessionConfigPath) && fs.statSync(this.sessionConfigPath).isDirectory()) {
-                const files = fs.readdirSync(this.sessionConfigPath);
-                const backends: { port: number, language?: string }[] = [];
-                for (const file of files) {
-                    if (file.endsWith('.json')) {
-                        try {
-                            const content = fs.readFileSync(path.join(this.sessionConfigPath, file), 'utf8');
-                            const config = JSON.parse(content);
-                            if (config.port) {
-                                backends.push({ 
-                                    port: config.port, 
-                                    language: config.language 
-                                });
-                            }
-                        } catch (e) { /* skip */ }
-                    }
-                }
-                return backends;
-            }
-        } catch (e) {
-            console.error('Error reading ports:', e);
+    private checkAndSendConfig() {
+        const backends = this.getBackends();
+        if (backends.length > 0) {
+            this.postMessage({ command: 'set_ports', backends });
         }
-        return [];
     }
 
     public postMessage(message: any) {

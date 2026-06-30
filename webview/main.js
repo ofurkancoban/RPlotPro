@@ -517,7 +517,10 @@ function handleMessage(data, port) {
             // Multi-terminal stability: Replace ONLY plots from THIS port
             const otherPlots = plots.filter(p => p.port && p.port !== port);
             const taggedIncoming = incomingPlots.map(np => ({ ...np, port }));
-            plots = [...otherPlots, ...taggedIncoming].sort((a,b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0));
+            // IDs are "r-<timestamp>" or "jl-<timestamp>"; parseInt("r-...") = NaN
+            // so strip the prefix before sorting to restore chronological order.
+            const idNum = id => Number(String(id).replace(/^[a-z]+-/i, '')) || 0;
+            plots = [...otherPlots, ...taggedIncoming].sort((a,b) => idNum(a.id) - idNum(b.id));
             
             rehydratePlots();
             break;
@@ -997,7 +1000,7 @@ function updatePlotList() {
     listEl.innerHTML = displayPlots.map(plot => {
         const actualIndex = plots.indexOf(plot);
         return createPlotItemHTML(plot, actualIndex);
-    }).reverse().join('');
+    }).join('');
     
     initThumbObserver();
 }

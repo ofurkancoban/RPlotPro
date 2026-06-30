@@ -10,7 +10,7 @@ local(
         # Gerekli paketleri sessizce yükle (Yansıtıcı Ayna - CRAN Mirror otomasyonu)
         ensure_rplot_pkgs <- function() {
             pkgs <- c("httpuv", "jsonlite", "base64enc", "svglite")
-            missing <- pkgs[!(pkgs %in% installed.packages()[, "Package"])]
+            missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
             
             if (length(missing) > 0) {
                 # Ayna seçimi penceresini engelle (Cloud mirror her zaman en güvenlisi)
@@ -66,7 +66,10 @@ local(
         client_dims <- list(width = 800, height = 600)
         in_capture <- FALSE
         last_capture_time <- 0
-        throttle_ms <- 500 # Minimum time between captures
+        throttle_ms <- 500 # Minimum time between captures (interactive use)
+        hook_registered <- FALSE # plot.new hook registered once per server lifetime
+        hook_active <- FALSE     # enables/disables the hook without removing it
+        plot_new_called <- FALSE # TRUE when plot.new() fired during current expression
         
         # Debug logging
         log_debug <- function(msg) {
@@ -206,15 +209,15 @@ local(
             for (client in clients) send_binary_to_client(client, "new_plot", raw_data, metadata)
         }
 
-        process_internal_capture <- function(current_plot, temp_file_path = NULL) {
+        process_internal_capture <- function(current_plot, temp_file_path = NULL,
+                                             bypass_throttle = FALSE, update_last = FALSE) {
             if (is.null(current_plot)) return()
             now <- as.numeric(Sys.time()) * 1000
-            if (now - last_capture_time < throttle_ms) return()
-            
+            if (!bypass_throttle && now - last_capture_time < throttle_ms) return()
+
             if (!identical(current_plot, last_plot)) {
                 last_plot <<- current_plot
                 last_capture_time <<- now
-                log_debug(paste("Capturing plot at", format(Sys.time(), "%H:%M:%S")))
 
                 if (is.null(temp_file_path)) {
                     temp_file <- tempfile(fileext = ".svg")
@@ -226,22 +229,35 @@ local(
                 if (file.exists(temp_file)) {
                     fsize <- file.size(temp_file)
                     if (fsize < 400) { unlink(temp_file); return() }
-                    
+
                     raw_data <- readBin(temp_file, "raw", fsize)
-                    id <- sprintf("r-%.0f", as.numeric(Sys.time()) * 1000)
-                    plot_metadata <- list(id = id, timestamp = format(Sys.time(), "%H:%M:%S"), format = "svg")
 
-                    if (length(plots) >= 200) {
-                        old_id <- plots[[1]]$id
-                        recordings[[old_id]] <<- NULL
-                        raw_plots[[old_id]] <<- NULL
-                        plots <<- plots[-1]
+                    # update_last=TRUE: expression didn't open a new frame (e.g. qqline,
+                    # lines, points) — replace the last entry instead of adding a new one.
+                    if (update_last && length(plots) > 0) {
+                        id <- plots[[length(plots)]]$id
+                        plot_metadata <- list(id = id, timestamp = format(Sys.time(), "%H:%M:%S"), format = "svg")
+                        plots[[length(plots)]] <<- plot_metadata
+                        recordings[[id]] <<- current_plot
+                        raw_plots[[id]] <<- raw_data
+                        for (client in clients)
+                            send_binary_to_client(client, "update_plot", raw_data, plot_metadata)
+                    } else {
+                        id <- sprintf("r-%.0f", as.numeric(Sys.time()) * 1000)
+                        plot_metadata <- list(id = id, timestamp = format(Sys.time(), "%H:%M:%S"), format = "svg")
+
+                        if (length(plots) >= 200) {
+                            old_id <- plots[[1]]$id
+                            recordings[[old_id]] <<- NULL
+                            raw_plots[[old_id]] <<- NULL
+                            plots <<- plots[-1]
+                        }
+
+                        plots[[length(plots) + 1]] <<- plot_metadata
+                        recordings[[id]] <<- current_plot
+                        raw_plots[[id]] <<- raw_data
+                        send_plot_to_clients(raw_data, plot_metadata)
                     }
-
-                    plots[[length(plots) + 1]] <<- plot_metadata
-                    recordings[[id]] <<- current_plot
-                    raw_plots[[id]] <<- raw_data
-                    send_plot_to_clients(raw_data, plot_metadata)
                     unlink(temp_file)
                 }
             }
@@ -252,37 +268,52 @@ local(
             log_debug("Manual capture requested")
             safe_capture(force = TRUE)
         }
+
+        # Called by trace("plot.new") — just sets the flag, no capture.
+        # This tells source_capture / check_for_new_plot that a new frame opened.
+        .vsc_rplot$on_plot_new <- function() { plot_new_called <<- TRUE }
+
+        # Legacy entry point kept for safety (no longer used by any tracer).
+        .vsc_rplot$safe_capture_batch <- function() {
+            if (!isTRUE(hook_active) || isTRUE(in_capture) || dev.cur() <= 1) return()
+            safe_capture(bypass_throttle = TRUE)
+        }
         
         # Robust capture logic
-        safe_capture <- function(force = FALSE) {
+        safe_capture <- function(force = FALSE, bypass_throttle = FALSE, update_last = FALSE) {
             if (isTRUE(in_capture)) return()
             if (dev.cur() <= 1) return()
-            
+
             tryCatch({
                 current_plot <- recordPlot()
                 if (is.null(current_plot)) return()
-                
+
                 if (force || !identical(current_plot, last_plot)) {
-                    if (!force) {
+                    if (!force && !bypass_throttle) {
                         now <- as.numeric(Sys.time()) * 1000
                         if (now - last_capture_time < throttle_ms) return()
                     }
-                    
+
                     in_capture <<- TRUE
                     on.exit(in_capture <<- FALSE)
-                    
+
                     temp_file <- tempfile(fileext = ".svg")
                     svglite::svglite(filename = temp_file, width = 10, height = 6, bg = "white")
                     replayPlot(current_plot)
                     dev.off()
-                    
-                    process_internal_capture(current_plot, temp_file_path = temp_file)
+
+                    process_internal_capture(current_plot, temp_file_path = temp_file,
+                                             bypass_throttle = bypass_throttle || force,
+                                             update_last = update_last)
                 }
             }, error = function(e) { log_debug(paste("Capture Error:", e$message)) })
         }
         
         check_for_new_plot <- function(expr, value, ok, visible) {
-            safe_capture()
+            new_frame <- isTRUE(plot_new_called)
+            plot_new_called <<- FALSE
+            safe_capture(bypass_throttle = TRUE,
+                         update_last = !new_frame && length(plots) > 0)
             return(TRUE)
         }
 
@@ -300,7 +331,14 @@ local(
 
         # Public functions assigned to .vsc_rplot
         .vsc_rplot$start_plot_viewer <- function(port = NULL) {
-            if (!is.null(server)) { stopServer(server); server <<- NULL }
+            # If server is already running (e.g. started by .Rprofile before the
+            # sentinel injection fires), do not restart — just re-enable hooks.
+            # This prevents the sentinel from destroying captured plots by
+            # restarting a perfectly healthy server.
+            if (!is.null(server)) {
+                hook_active <<- TRUE
+                return(invisible(server))
+            }
             if (is.null(port)) port <- sample(10000:30000, 1)
 
             env_config_path <- Sys.getenv("VSCODE_R_PLOT_CONFIG")
@@ -308,7 +346,7 @@ local(
                 if (isTRUE(file.info(env_config_path)$isdir)) file.path(env_config_path, paste0("port_", port, ".json")) else env_config_path
             } else file.path(getwd(), ".r_plot_config.json")
 
-            writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.45.0"), auto_unbox = TRUE), local_config_file)
+            writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.46.0"), auto_unbox = TRUE), local_config_file)
 
             reg.finalizer(.GlobalEnv, function(e) { if (file.exists(local_config_file)) unlink(local_config_file) }, onexit = TRUE)
 
@@ -325,33 +363,73 @@ local(
             if (is.null(server)) return(invisible(NULL))
 
             options(device = vscode_bg_device)
-            
+
             if (!is.null(callback_id)) removeTaskCallback(callback_id)
             callback_id <<- addTaskCallback(check_for_new_plot, name = "plot_viewer_watcher")
 
-            tryCatch({
-                if (requireNamespace("ggplot2", quietly = TRUE)) {
-                    ns <- asNamespace("ggplot2")
-                    if (exists("print.ggplot", envir = ns)) {
-                        suppressMessages(trace("print.ggplot", print = FALSE, exit = quote({
-                            options(device = .vsc_rplot$vscode_bg_device)
-                            .vsc_rplot$capture()
-                        }), where = ns))
+            hook_active <<- TRUE
+
+            if (!isTRUE(hook_registered)) {
+                tryCatch({
+                    suppressMessages({
+                        # Flag-only tracer: sets plot_new_called so source_capture /
+                        # check_for_new_plot can distinguish "new frame" from "added to
+                        # existing frame" (lines, qqline, legend, etc.). No capture here —
+                        # that avoids intermediate multi-panel frames (pairs, mfrow).
+                        trace("plot.new",
+                              tracer = quote(.vsc_rplot$on_plot_new()),
+                              print = FALSE,
+                              where = asNamespace("graphics"))
+                    })
+                    hook_registered <<- TRUE
+                }, error = function(e) { log_debug(paste("plot.new trace failed:", e$message)) })
+
+                tryCatch({
+                    if (requireNamespace("ggplot2", quietly = TRUE)) {
+                        ns <- asNamespace("ggplot2")
+                        if (exists("print.ggplot", envir = ns)) {
+                            suppressMessages(trace("print.ggplot", print = FALSE,
+                                exit = quote({
+                                    options(device = .vsc_rplot$vscode_bg_device)
+                                    .vsc_rplot$capture()
+                                }),
+                                where = ns))
+                        }
                     }
-                }
-            }, error = function(e) { log_debug(paste("Trace Error:", e$message)) })
+                }, error = function(e) { log_debug(paste("ggplot2 trace failed:", e$message)) })
+            }
+
+            # Patch source() in GlobalEnv for reliable per-expression capture
+            tryCatch(.vsc_rplot$install_source_patch(), error = function(e) {})
+
+            # Capture any plot that was already on the device when init.R ran
+            # (e.g. user sourced a script before injection; init.R rescued it
+            # from quartz/X11 and replayed onto the null PDF). Force=TRUE because
+            # last_plot is NULL at this point and recordPlot() may return the
+            # replayed state.
+            tryCatch({
+                if (dev.cur() > 1) safe_capture(force = TRUE)
+            }, error = function(e) {})
 
             invisible(server)
         }
 
         .vsc_rplot$stop_plot_viewer <- function() {
+            hook_active <<- FALSE
+            # Restore original source() if we patched it
+            tryCatch({
+                if (exists("source", envir = .GlobalEnv)) rm("source", envir = .GlobalEnv)
+            }, error = function(e) {})
             if (!is.null(server)) { stopServer(server); server <<- NULL }
             if (!is.null(callback_id)) { removeTaskCallback(callback_id); callback_id <<- NULL }
+            tryCatch(suppressMessages(untrace("plot.new", where = asNamespace("graphics"))),
+                     error = function(e) {})
             tryCatch({
                 if (requireNamespace("ggplot2", quietly = TRUE)) {
                     suppressMessages(untrace("print.ggplot", where = asNamespace("ggplot2")))
                 }
             }, error = function(e) {})
+            hook_registered <<- FALSE
         }
 
         .vsc_rplot$clear_plots <- function() {
@@ -362,7 +440,64 @@ local(
             for (c in clients) tryCatch(c$send(msg), error = function(e) {})
         }
 
+        .vsc_rplot$version  <- "0.46.0"
         .vsc_rplot$run_file <- function(file_path) { utils::source(file_path); invisible(NULL) }
+
+        # Direct capture exposed for patched source() — bypasses hook_active so
+        # it works even during .Rprofile startup before the flag is confirmed set.
+        .vsc_rplot$source_capture <- function() {
+            if (isTRUE(in_capture) || dev.cur() <= 1) return()
+            new_frame <- isTRUE(plot_new_called)
+            plot_new_called <<- FALSE
+            tryCatch(safe_capture(bypass_throttle = TRUE,
+                                  update_last = !new_frame && length(plots) > 0),
+                     error = function(e) {})
+        }
+
+        # Patch source() in GlobalEnv so every top-level expression is followed
+        # by a capture attempt. Each expression is evaluated individually so we
+        # can probe the device state between calls — the same technique Positron
+        # uses in its execution loop.
+        .vsc_rplot$install_source_patch <- function() {
+            patched <- function(file, local = FALSE, echo = FALSE,
+                                print.eval = echo, ...) {
+                # Delegate non-file or unparseable calls to the real source()
+                if (!is.character(file) || length(file) != 1L) {
+                    return(base::source(file, local = local, echo = echo,
+                                        print.eval = print.eval, ...))
+                }
+                expanded <- tryCatch(path.expand(file), error = function(e) file)
+                exprs <- tryCatch(parse(expanded), error = function(e) NULL)
+                if (is.null(exprs) || length(exprs) == 0L) {
+                    return(base::source(file, local = local, echo = echo,
+                                        print.eval = print.eval, ...))
+                }
+
+                env <- if (isTRUE(local)) new.env(parent = parent.frame()) else .GlobalEnv
+
+                for (i in seq_along(exprs)) {
+                    tryCatch(
+                        withCallingHandlers(
+                            {
+                                res <- withVisible(eval(exprs[[i]], envir = env))
+                                if (print.eval && res$visible) print(res$value)
+                            },
+                            message = function(m) {
+                                message(conditionMessage(m))
+                                invokeRestart("muffleMessage")
+                            }
+                        ),
+                        error = function(e) {
+                            cat("Error in", deparse(exprs[[i]]),
+                                ":", conditionMessage(e), "\n")
+                        }
+                    )
+                    tryCatch(.vsc_rplot$source_capture(), error = function(e) {})
+                }
+                invisible(env)
+            }
+            assign("source", patched, envir = .GlobalEnv)
+        }
     },
     envir = .vsc_rplot
 )

@@ -2,7 +2,7 @@
   "name": "r-plot-pro",
   "displayName": "R Plot Pro",
   "description": "The ultimate R and Julia visualization experience for VS Code. High-performance, real-time, and designed for professionals who demand the best of RStudio and Positron.",
-  "version": "0.45.0",
+  "version": "0.46.0",
   "license": "MIT",
   "publisher": "ofurkancoban",
   "icon": "assets/icon.png",
@@ -51,6 +51,10 @@
         "command": "rPlotViewer.nextPlot",
         "title": "R Plot: Next Plot",
         "icon": "$(chevron-right)"
+      },
+      {
+        "command": "rPlotViewer.removeFromRprofile",
+        "title": "R Plot Pro: Remove .Rprofile Hook"
       }
     ],
     "viewsContainers": {

@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://open-vsx.org/extension/ofurkancoban/r-plot-pro"><img src="https://img.shields.io/open-vsx/dt/ofurkancoban/r-plot-pro?style=for-the-badge" alt="Open VSX Downloads"></a>
-  <img src="https://img.shields.io/badge/Version-0.45.0-green?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-0.46.0-green?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/Installs-1k+-blue?style=for-the-badge" alt="Installs">
   <img src="https://img.shields.io/badge/License-MIT-orange?style=for-the-badge" alt="License">
   <a href="https://marketplace.visualstudio.com/items?itemName=ofurkancoban.r-plot-pro"><img src="https://img.shields.io/badge/Marketplace-ofurkancoban-blue?style=for-the-badge&logo=visual-studio-code" alt="VS Code Marketplace"></a>
@@ -113,7 +113,7 @@ R Plot Pro features a **Continuous Sentinel** that scans your integrated termina
 2. **Or install manually:**
 
    - Download the `.vsix` file
-   - Run: `code --install-extension r-plot-pro-0.40.0.vsix`
+   - Run: `code --install-extension r-plot-pro-0.46.0.vsix`
 
 ### First Use
 
@@ -251,6 +251,15 @@ This extension works out of the box with no configuration needed. Advanced users
 ---
 
 ## 🔄 Release Notes
+
+### 0.46.0 - Positron-Grade Multi-Plot Capture
+
+**The most reliable R plot capture engine yet — matches Positron behavior exactly.**
+
+- **Fixed: First-run single-plot capture** — Root cause identified and eliminated. `installed.packages()` was failing silently during `.Rprofile` startup (utils not yet attached), causing init.R to abort before installing the source patch. Replaced with `requireNamespace()` which is always available at startup.
+- **Fixed: Multi-panel plots as single frame** — `pairs()`, `layout()`, `par(mfrow=...)` and any function that calls `plot.new()` internally no longer produce partial intermediate captures. The `plot.new` tracer now only sets a flag; actual capture happens once per expression, after the expression completes — identical to Positron's execution loop.
+- **Fixed: Additive draw functions update in-place** — `qqline()`, `lines()`, `points()`, `legend()`, `abline()` and similar functions that draw on the existing frame now update the last plot entry instead of creating a new one. Result: `qqnorm()` + `qqline()` = 1 plot, not 2.
+- **New: Julia 20-plot test suite** — Comprehensive test script covering scatter, line, histogram, bar, heatmap, contour, 3D surface, 3D scatter, subplots, and more using base Plots.jl (no StatsPlots required).
 
 ### 0.45.0 - Universal Capture Engine & GIS Stability
 
