@@ -226,6 +226,41 @@ function debounce(func, wait) {
 
 const activeSockets = new Map(); // port -> WebSocket
 const portLanguages = new Map(); // port -> language
+const desiredPorts = new Map();      // port -> language: ports we want to stay connected to
+const reconnectTimers = new Map();   // port -> timeout id (pending reconnect)
+const reconnectAttempts = new Map(); // port -> consecutive failed attempts
+const MAX_RECONNECT = 8;             // give up after this many tries (server truly gone)
+
+// Cancel any pending reconnect for a port and reset its attempt counter.
+function clearReconnect(port) {
+    port = Number(port);
+    const t = reconnectTimers.get(port);
+    if (t) { clearTimeout(t); reconnectTimers.delete(port); }
+    reconnectAttempts.delete(port);
+}
+
+// Schedule a reconnect to a dropped port with linear backoff (capped), unless the
+// port is no longer wanted or we have exhausted the attempt budget.
+function scheduleReconnect(port, lang) {
+    port = Number(port);
+    if (reconnectTimers.has(port)) return;             // already scheduled
+    if (!desiredPorts.has(port)) return;               // no longer a live backend
+    const n = (reconnectAttempts.get(port) || 0) + 1;
+    // Sticky give-up: keep the counter above the budget so repeated onclose events
+    // do not restart the cycle. It is reset by a successful connect (clearReconnect)
+    // or by a fresh discovery calling connectToPort again.
+    if (n > MAX_RECONNECT) { log(`Giving up reconnect to port ${port}`); reconnectAttempts.set(port, n); return; }
+    reconnectAttempts.set(port, n);
+    const delay = Math.min(1000 * n, 5000);
+    log(`Reconnecting to port ${port} in ${delay}ms (attempt ${n}/${MAX_RECONNECT})`);
+    const t = setTimeout(() => {
+        reconnectTimers.delete(port);
+        if (desiredPorts.has(port) && !activeSockets.has(port)) {
+            connectToPort(port, desiredPorts.get(port) || lang);
+        }
+    }, delay);
+    reconnectTimers.set(port, t);
+}
 
 const LOGOS = {
     julia: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><path d="M58.3 93.5c0 15.7-12.7 28.3-28.3 28.3-15.7 0-28.3-12.7-28.3-28.3 0-15.6 12.7-28.3 28.3-28.3 15.6-.1 28.3 12.6 28.3 28.3" fill="#cb3c33"/><path d="M30 123.4c-16.5 0-30-13.4-30-30s13.4-30 30-30 30 13.4 30 30-13.5 30-30 30zm0-56.6c-14.7 0-26.7 12-26.7 26.7s12 26.7 26.7 26.7 26.7-12 26.7-26.7-12-26.7-26.7-26.7z" fill="#eee"/><path d="M126.4 93.5c0 15.7-12.7 28.3-28.3 28.3s-28.3-12.7-28.3-28.3c0-15.6 12.7-28.3 28.3-28.3s28.3 12.6 28.3 28.3" fill="#9558b2"/><path d="M98 123.4c-16.5 0-30-13.4-30-30s13.4-30 30-30 30 13.4 30 30-13.4 30-30 30zm0-56.6c-14.7 0-26.7 12-26.7 26.7s12 26.7 26.7 26.7 26.7-12 26.7-26.7S112.8 66.8 98 66.8z" fill="#eee"/><path d="M92.4 34.5c0 15.6-12.7 28.3-28.3 28.3-15.7 0-28.3-12.7-28.3-28.3S48.4 6.2 64 6.2c15.7 0 28.4 12.7 28.4 28.3" fill="#389826"/><path d="M64 64.5c-16.5 0-30-13.4-30-30s13.4-30 30-30 30 13.4 30 30-13.5 30-30 30zm0-56.7c-14.7 0-26.7 12-26.7 26.7s12 26.7 26.7 26.7 26.7-12 26.7-26.7S78.7 7.8 64 7.8z" fill="#eee"/></svg>`,
@@ -237,10 +272,17 @@ function updateConnections(backends) {
     
     const ports = backends.map(b => Number(b.port));
 
+    // Remember which ports we want to stay connected to, so an unexpected drop can
+    // be told apart from a backend that genuinely went away (auto-reconnect).
+    desiredPorts.clear();
+    for (const b of backends) desiredPorts.set(Number(b.port), b.language);
+
     // 1. Close connections for ports no longer in the list
     for (const [port, socket] of activeSockets) {
         if (!ports.includes(Number(port))) {
             log(`Closing connection to port ${port}`);
+            socket._intentionalClose = true;   // do not auto-reconnect this one
+            clearReconnect(port);
             socket.close();
             activeSockets.delete(port);
             portLanguages.delete(port);
@@ -297,6 +339,7 @@ function connectToPort(port, language) {
 
         socket.onopen = () => {
             log(`Connected to port ${p}`);
+            clearReconnect(p);   // reset backoff on a successful connection
             activeSockets.set(p, socket);
             if (lang) portLanguages.set(p, lang);
             updateConnectionStatus(true);
@@ -326,6 +369,9 @@ function connectToPort(port, language) {
             portLanguages.delete(p);
             updateConnectionStatus(activeSockets.size > 0);
             log(`Closed port ${p}`);
+            // Auto-reconnect on an unexpected drop (R busy, transient network) so the
+            // view recovers on its own instead of staying "Offline" until R restarts.
+            if (!socket._intentionalClose) scheduleReconnect(p, lang);
         };
 
         socket.onerror = (e) => {

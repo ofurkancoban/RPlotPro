@@ -1,5 +1,15 @@
 # R Plot Pro — Release Notes
 
+## v0.47.0 — Windows, remote and connection fixes
+
+**Resolves the open Windows / remote / connection issues (#3, #4, #5, #6).**
+
+### Bug Fixes
+- **Activation on machines without the Julia extension (#4)** — `julialang.language-julia` was a hard `extensionDependencies` entry, so VS Code refused to activate the extension for anyone who did not have it installed, leaving commands like `rPlotViewer.showPlot` unregistered. Julia support is now optional; only the R extension is required.
+- **`/tmp/rplot_debug.log` warnings on Windows and remote backends (#5, #6)** — the R server hardcoded the debug-log path to `/tmp` and only caught errors, not warnings, so `file()` failing surfaced `cannot open file '/tmp/rplot_debug.log'` on every plot. The log now lives under `tempdir()` and writes are fully warning-safe.
+- **Connection drops to "Offline" and never recovers (#3)** — the webview now auto-reconnects to a dropped-but-still-live backend (linear backoff, capped, sticky give-up), instead of staying offline until R is restarted.
+- **Unix-only port recovery** — the "address already in use" fallback used `lsof`/`kill`; it now runs those only on Unix and otherwise retries on a fresh port, rewriting the config so the extension reconnects.
+
 ## v0.46.0 — Positron-Grade Multi-Plot Capture
 
 **The most reliable R plot capture engine yet — matches Positron behavior exactly.**
