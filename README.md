@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://open-vsx.org/extension/ofurkancoban/r-plot-pro"><img src="https://img.shields.io/open-vsx/dt/ofurkancoban/r-plot-pro?style=for-the-badge" alt="Open VSX Downloads"></a>
-  <img src="https://img.shields.io/badge/Version-0.46.0-green?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-0.47.0-green?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/Installs-1k+-blue?style=for-the-badge" alt="Installs">
   <img src="https://img.shields.io/badge/License-MIT-orange?style=for-the-badge" alt="License">
   <a href="https://marketplace.visualstudio.com/items?itemName=ofurkancoban.r-plot-pro"><img src="https://img.shields.io/badge/Marketplace-ofurkancoban-blue?style=for-the-badge&logo=visual-studio-code" alt="VS Code Marketplace"></a>
@@ -114,7 +114,7 @@ R Plot Pro features a **Continuous Sentinel** that scans your integrated termina
 2. **Or install manually:**
 
    - Download the `.vsix` file
-   - Run: `code --install-extension r-plot-pro-0.46.0.vsix`
+   - Run: `code --install-extension r-plot-pro-0.47.0.vsix`
 
 ### First Use
 
@@ -252,6 +252,13 @@ This extension works out of the box with no configuration needed. Advanced users
 ---
 
 ## 🔄 Release Notes
+
+### 0.47.0 - Windows, remote and connection fixes
+
+- **Fixed: `command 'rPlotViewer.showPlot' not found`** — the Julia extension was a hard `extensionDependencies` entry, so VS Code refused to activate R Plot Pro for users without it, and no commands were registered. Julia support is now optional.
+- **Fixed: `cannot open file '/tmp/rplot_debug.log'` warnings on Windows / remote** — the R server wrote its debug log to a hardcoded `/tmp` path and only caught errors, not warnings. It now uses a cross-platform `tempdir()` path and never surfaces a warning into your R session.
+- **Fixed: connection drops to "Offline" and never recovers** — the plot view now auto-reconnects to a dropped-but-still-live backend with capped backoff, instead of staying offline until R is restarted.
+- **Hardened port recovery** — the "address already in use" fallback no longer relies on Unix-only `lsof`/`kill`; on Windows it retries on a fresh port.
 
 ### 0.46.0 - Positron-Grade Multi-Plot Capture
 

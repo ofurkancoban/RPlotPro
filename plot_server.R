@@ -352,7 +352,7 @@ local(
                 if (isTRUE(file.info(env_config_path)$isdir)) file.path(env_config_path, paste0("port_", port, ".json")) else env_config_path
             } else file.path(getwd(), ".r_plot_config.json")
 
-            writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.46.0"), auto_unbox = TRUE), local_config_file)
+            writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.47.0"), auto_unbox = TRUE), local_config_file)
 
             reg.finalizer(.GlobalEnv, function(e) { if (file.exists(local_config_file)) unlink(local_config_file) }, onexit = TRUE)
 
@@ -374,7 +374,7 @@ local(
                     }
                     if (is.null(server)) {
                         port <<- sample(10000:30000, 1)
-                        writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.46.0"), auto_unbox = TRUE), local_config_file)
+                        writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.47.0"), auto_unbox = TRUE), local_config_file)
                         server <<- startServer(host = "127.0.0.1", port = port, app = list(call = plot_http_handler, onWSOpen = plot_ws_handler))
                     }
                 } else stop(e)
@@ -460,7 +460,7 @@ local(
             for (c in clients) tryCatch(c$send(msg), error = function(e) {})
         }
 
-        .vsc_rplot$version  <- "0.46.0"
+        .vsc_rplot$version  <- "0.47.0"
         .vsc_rplot$run_file <- function(file_path) { utils::source(file_path); invisible(NULL) }
 
         # Direct capture exposed for patched source() — bypasses hook_active so
