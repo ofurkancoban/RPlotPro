@@ -71,12 +71,18 @@ local(
         hook_active <- FALSE     # enables/disables the hook without removing it
         plot_new_called <- FALSE # TRUE when plot.new() fired during current expression
         
-        # Debug logging
+        # Debug logging. Use a cross-platform temp path (tempdir()) instead of a
+        # hardcoded "/tmp", which does not exist on Windows, and swallow warnings
+        # as well as errors so a failed write can never surface in the user's R
+        # session (e.g. the "cannot open file '/tmp/rplot_debug.log'" warning).
+        debug_log_file <- tryCatch(file.path(tempdir(), "rplot_debug.log"),
+                                   error = function(e) "")
         log_debug <- function(msg) {
-            tryCatch({
-                cat(paste0("[", format(Sys.time(), "%H:%M:%S"), "] ", msg, "\n"), 
-                    file = "/tmp/rplot_debug.log", append = TRUE)
-            }, error = function(e) {})
+            if (!nzchar(debug_log_file)) return(invisible(NULL))
+            suppressWarnings(tryCatch({
+                cat(paste0("[", format(Sys.time(), "%H:%M:%S"), "] ", msg, "\n"),
+                    file = debug_log_file, append = TRUE)
+            }, error = function(e) NULL))
         }
         log_debug("Plot Server initializing...")
 
@@ -354,9 +360,23 @@ local(
                 server <<- startServer(host = "127.0.0.1", port = port, app = list(call = plot_http_handler, onWSOpen = plot_ws_handler))
             }, error = function(e) {
                 if (grepl("address already in use", e$message, ignore.case = TRUE)) {
-                    system(sprintf("lsof -ti:%d | xargs kill -9", port), ignore.stderr = TRUE)
-                    Sys.sleep(1)
-                    server <<- startServer(host = "127.0.0.1", port = port, app = list(call = plot_http_handler, onWSOpen = plot_ws_handler))
+                    # On Unix, free the port with lsof/kill (these do not exist on
+                    # Windows, so guard the call). If the port is still busy - or on
+                    # Windows, where we do not force-kill - fall back to a fresh
+                    # random port and rewrite the config so the extension connects
+                    # to the new one.
+                    if (.Platform$OS.type == "unix") {
+                        system(sprintf("lsof -ti:%d | xargs kill -9", port), ignore.stderr = TRUE)
+                        Sys.sleep(1)
+                        server <<- tryCatch(
+                            startServer(host = "127.0.0.1", port = port, app = list(call = plot_http_handler, onWSOpen = plot_ws_handler)),
+                            error = function(e2) NULL)
+                    }
+                    if (is.null(server)) {
+                        port <<- sample(10000:30000, 1)
+                        writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.46.0"), auto_unbox = TRUE), local_config_file)
+                        server <<- startServer(host = "127.0.0.1", port = port, app = list(call = plot_http_handler, onWSOpen = plot_ws_handler))
+                    }
                 } else stop(e)
             })
 
