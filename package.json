@@ -21,8 +21,7 @@
     "*"
   ],
   "extensionDependencies": [
-    "REditorSupport.r",
-    "julialang.language-julia"
+    "REditorSupport.r"
   ],
   "main": "./out/extension.js",
   "contributes": {
