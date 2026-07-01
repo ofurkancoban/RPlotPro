@@ -3,3 +3,5 @@ task.md
 .gitignore
 *.vsix
 .gitignore
+*.env
+.config/
