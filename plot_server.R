@@ -257,7 +257,7 @@ local(
                     raw_data <- readBin(temp_file, "raw", fsize)
 
                     # update_last=TRUE: expression didn't open a new frame (e.g. qqline,
-                    # lines, points) — replace the last entry instead of adding a new one.
+                    # lines, points) - replace the last entry instead of adding a new one.
                     if (update_last && length(plots) > 0) {
                         id <- plots[[length(plots)]]$id
                         plot_metadata <- make_meta(id)
@@ -293,7 +293,7 @@ local(
             safe_capture(force = TRUE)
         }
 
-        # Called by trace("plot.new") — just sets the flag, no capture.
+        # Called by trace("plot.new") - just sets the flag, no capture.
         # This tells source_capture / check_for_new_plot that a new frame opened.
         .vsc_rplot$on_plot_new <- function() { plot_new_called <<- TRUE }
 
@@ -377,7 +377,7 @@ local(
         # Public functions assigned to .vsc_rplot
         .vsc_rplot$start_plot_viewer <- function(port = NULL) {
             # If server is already running (e.g. started by .Rprofile before the
-            # sentinel injection fires), do not restart — just re-enable hooks.
+            # sentinel injection fires), do not restart - just re-enable hooks.
             # This prevents the sentinel from destroying captured plots by
             # restarting a perfectly healthy server.
             if (!is.null(server)) {
@@ -439,7 +439,7 @@ local(
                     suppressMessages({
                         # Flag-only tracer: sets plot_new_called so source_capture /
                         # check_for_new_plot can distinguish "new frame" from "added to
-                        # existing frame" (lines, qqline, legend, etc.). No capture here —
+                        # existing frame" (lines, qqline, legend, etc.). No capture here -
                         # that avoids intermediate multi-panel frames (pairs, mfrow).
                         trace("plot.new",
                               tracer = quote(.vsc_rplot$on_plot_new()),
@@ -508,7 +508,7 @@ local(
         .vsc_rplot$version  <- "0.48.0"
         .vsc_rplot$run_file <- function(file_path) { utils::source(file_path); invisible(NULL) }
 
-        # Direct capture exposed for patched source() — bypasses hook_active so
+        # Direct capture exposed for patched source() - bypasses hook_active so
         # it works even during .Rprofile startup before the flag is confirmed set.
         .vsc_rplot$source_capture <- function() {
             if (isTRUE(in_capture) || dev.cur() <= 1) return()
@@ -521,7 +521,7 @@ local(
 
         # Patch source() in GlobalEnv so every top-level expression is followed
         # by a capture attempt. Each expression is evaluated individually so we
-        # can probe the device state between calls — the same technique Positron
+        # can probe the device state between calls - the same technique Positron
         # uses in its execution loop.
         .vsc_rplot$install_source_patch <- function() {
             patched <- function(file, local = FALSE, echo = FALSE,

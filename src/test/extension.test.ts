@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 
 const EXT_ID = 'ofurkancoban.r-plot-pro';
 
-// Commands contributed in package.json — all must be registered after activation.
+// Commands contributed in package.json - all must be registered after activation.
 const CONTRIBUTED_COMMANDS = [
     'rPlotViewer.showPlot',
     'rPlotViewer.clearPlot',
