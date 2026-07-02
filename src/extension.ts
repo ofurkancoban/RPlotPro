@@ -606,6 +606,25 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor(updateActiveFile)
     );
+
+    // Reverse link: when the cursor moves in an R/Julia source file, tell the webview
+    // to highlight the plots whose captured srcref covers that line. Debounced so a
+    // fast-moving cursor does not flood the webview.
+    let selectionTimer: ReturnType<typeof setTimeout> | undefined;
+    context.subscriptions.push(
+        vscode.window.onDidChangeTextEditorSelection((e) => {
+            const doc = e.textEditor.document;
+            if (doc.uri.scheme !== 'file') return;
+            if (doc.languageId !== 'r' && doc.languageId !== 'julia') return;
+            const file = doc.uri.fsPath;
+            const line = e.selections[0].active.line + 1; // 1-based, matches R srcref
+            if (selectionTimer) clearTimeout(selectionTimer);
+            selectionTimer = setTimeout(() => {
+                plotProvider.postMessage({ command: 'highlight_source', file, line });
+            }, 120);
+        })
+    );
+    context.subscriptions.push({ dispose: () => { if (selectionTimer) clearTimeout(selectionTimer); } });
 }
 
 export function deactivate() { }

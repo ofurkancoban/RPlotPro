@@ -276,6 +276,14 @@ button.icon-btn svg[fill="currentColor"] {
     border-top: 3px solid var(--accent);
 }
 
+/* Reverse code -> plot link: thumbnails whose source covers the editor cursor line. */
+.plot-item.source-linked {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+    box-shadow: 0 0 8px 0 var(--accent);
+    opacity: 1;
+}
+
 .plot-item img {
     width: 115px !important;
     height: 75px !important;
