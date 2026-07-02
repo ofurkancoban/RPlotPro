@@ -22,6 +22,9 @@ var RPlotCore = (() => {
   var src_exports = {};
   __export(src_exports, {
     ReconnectManager: () => ReconnectManager,
+    aspectRatio: () => aspectRatio,
+    computeExportCanvas: () => computeExportCanvas,
+    computePlotDimensions: () => computePlotDimensions,
     idNum: () => idNum,
     mergePlotLists: () => mergePlotLists
   });
@@ -102,6 +105,54 @@ var RPlotCore = (() => {
       }
     }
     return Array.from(byId.values()).sort((a, b) => idNum(a.id) - idNum(b.id));
+  }
+
+  // webview/src/geometry.ts
+  function aspectRatio(aspect) {
+    if (aspect === "square") return 1;
+    if (aspect === "landscape") return 4 / 3;
+    if (aspect === "portrait") return 3 / 4;
+    return 0;
+  }
+  function computePlotDimensions(zoom, aspect, containerW, containerH) {
+    const ratio = aspectRatio(aspect);
+    let fitW;
+    let fitH;
+    if (ratio === 0) {
+      fitW = containerW;
+      fitH = containerH;
+    } else if (containerW / containerH > ratio) {
+      fitH = containerH;
+      fitW = containerH * ratio;
+    } else {
+      fitW = containerW;
+      fitH = containerW / ratio;
+    }
+    let width;
+    let height;
+    if (zoom === "fit") {
+      width = fitW;
+      height = fitH;
+    } else {
+      const factor = parseInt(String(zoom), 10) / 100;
+      width = fitW * factor;
+      height = fitH * factor;
+    }
+    return { width, height, fitsW: width <= containerW, fitsH: height <= containerH };
+  }
+  function computeExportCanvas(natW, natH, opts = {}) {
+    if (opts.width && opts.height) {
+      const cw2 = opts.width;
+      const ch2 = opts.height;
+      const r = Math.min(cw2 / natW, ch2 / natH);
+      const dw = natW * r;
+      const dh = natH * r;
+      return { cw: cw2, ch: ch2, dx: (cw2 - dw) / 2, dy: (ch2 - dh) / 2, dw, dh };
+    }
+    const scale = opts.scale || 2;
+    const cw = natW * scale;
+    const ch = natH * scale;
+    return { cw, ch, dx: 0, dy: 0, dw: cw, dh: ch };
   }
   return __toCommonJS(src_exports);
 })();
