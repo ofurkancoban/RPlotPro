@@ -4,7 +4,10 @@
 .github/**
 scripts/**
 src/**
+webview/src/**
 out/test/**
+out-webview/**
+tsconfig.webview.json
 node_modules/**
 **/*.map
 **/*.ts

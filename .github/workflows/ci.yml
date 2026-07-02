@@ -27,6 +27,9 @@ jobs:
       - name: Compile (type-check)
         run: npm run compile
 
+      - name: Unit tests (webview core)
+        run: npm run test:unit
+
       # VS Code integration tests need a display on Linux; xvfb provides one.
       - name: Run tests (Linux)
         if: runner.os == 'Linux'

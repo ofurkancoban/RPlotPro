@@ -574,12 +574,14 @@ class PlotViewProvider {
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'main.js'));
         const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'style.css'));
         const jspdfUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'vendor', 'jspdf.umd.min.js'));
+        const rplotCoreUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'vendor', 'rplot-core.js'));
         const htmlPath = vscode.Uri.joinPath(extensionUri, 'webview', 'index.html');
         let html = fs.readFileSync(htmlPath.fsPath, 'utf8');
         // Replace placeholders
         html = html.replace(/\${webview.cspSource}/g, webview.cspSource)
             .replace(/\${styleUri}/g, styleUri.toString())
             .replace(/\${jspdfUri}/g, jspdfUri.toString())
+            .replace(/\${rplotCoreUri}/g, rplotCoreUri.toString())
             .replace(/\${scriptUri}/g, scriptUri.toString());
         return html;
     }

@@ -345,40 +345,20 @@ const activeSockets = new Map(); // port -> WebSocket
 const portLanguages = new Map(); // port -> language
 const desiredPorts = new Map();      // port -> language: ports we want to stay connected to
 const portUrls = new Map();          // port -> ws URL resolved by the extension (Remote-SSH/WSL/Codespaces forwarding)
-const reconnectTimers = new Map();   // port -> timeout id (pending reconnect)
-const reconnectAttempts = new Map(); // port -> consecutive failed attempts
-const MAX_RECONNECT = 8;             // give up after this many tries (server truly gone)
 
-// Cancel any pending reconnect for a port and reset its attempt counter.
-function clearReconnect(port) {
-    port = Number(port);
-    const t = reconnectTimers.get(port);
-    if (t) { clearTimeout(t); reconnectTimers.delete(port); }
-    reconnectAttempts.delete(port);
-}
+// Reconnect state machine lives in the typed, unit-tested core bundle
+// (webview/vendor/rplot-core.js -> window.RPlotCore). main.js keeps ownership of
+// desiredPorts/activeSockets and the actual connect(); the manager only decides when.
+const reconnectMgr = new window.RPlotCore.ReconnectManager({
+    maxReconnect: 8,
+    isDesired: (port) => desiredPorts.has(Number(port)),
+    isActive: (port) => activeSockets.has(Number(port)),
+    connect: (port) => connectToPort(Number(port), desiredPorts.get(Number(port))),
+    log: (msg) => log(msg)
+});
 
-// Schedule a reconnect to a dropped port with linear backoff (capped), unless the
-// port is no longer wanted or we have exhausted the attempt budget.
-function scheduleReconnect(port, lang) {
-    port = Number(port);
-    if (reconnectTimers.has(port)) return;             // already scheduled
-    if (!desiredPorts.has(port)) return;               // no longer a live backend
-    const n = (reconnectAttempts.get(port) || 0) + 1;
-    // Sticky give-up: keep the counter above the budget so repeated onclose events
-    // do not restart the cycle. It is reset by a successful connect (clearReconnect)
-    // or by a fresh discovery calling connectToPort again.
-    if (n > MAX_RECONNECT) { log(`Giving up reconnect to port ${port}`); reconnectAttempts.set(port, n); return; }
-    reconnectAttempts.set(port, n);
-    const delay = Math.min(1000 * n, 5000);
-    log(`Reconnecting to port ${port} in ${delay}ms (attempt ${n}/${MAX_RECONNECT})`);
-    const t = setTimeout(() => {
-        reconnectTimers.delete(port);
-        if (desiredPorts.has(port) && !activeSockets.has(port)) {
-            connectToPort(port, desiredPorts.get(port) || lang);
-        }
-    }, delay);
-    reconnectTimers.set(port, t);
-}
+function clearReconnect(port) { reconnectMgr.clear(Number(port)); }
+function scheduleReconnect(port) { reconnectMgr.schedule(Number(port)); }
 
 const LOGOS = {
     julia: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><path d="M58.3 93.5c0 15.7-12.7 28.3-28.3 28.3-15.7 0-28.3-12.7-28.3-28.3 0-15.6 12.7-28.3 28.3-28.3 15.6-.1 28.3 12.6 28.3 28.3" fill="#cb3c33"/><path d="M30 123.4c-16.5 0-30-13.4-30-30s13.4-30 30-30 30 13.4 30 30-13.5 30-30 30zm0-56.6c-14.7 0-26.7 12-26.7 26.7s12 26.7 26.7 26.7 26.7-12 26.7-26.7-12-26.7-26.7-26.7z" fill="#eee"/><path d="M126.4 93.5c0 15.7-12.7 28.3-28.3 28.3s-28.3-12.7-28.3-28.3c0-15.6 12.7-28.3 28.3-28.3s28.3 12.6 28.3 28.3" fill="#9558b2"/><path d="M98 123.4c-16.5 0-30-13.4-30-30s13.4-30 30-30 30 13.4 30 30-13.4 30-30 30zm0-56.6c-14.7 0-26.7 12-26.7 26.7s12 26.7 26.7 26.7 26.7-12 26.7-26.7S112.8 66.8 98 66.8z" fill="#eee"/><path d="M92.4 34.5c0 15.6-12.7 28.3-28.3 28.3-15.7 0-28.3-12.7-28.3-28.3S48.4 6.2 64 6.2c15.7 0 28.4 12.7 28.4 28.3" fill="#389826"/><path d="M64 64.5c-16.5 0-30-13.4-30-30s13.4-30 30-30 30 13.4 30 30-13.5 30-30 30zm0-56.7c-14.7 0-26.7 12-26.7 26.7s12 26.7 26.7 26.7 26.7-12 26.7-26.7S78.7 7.8 64 7.8z" fill="#eee"/></svg>`,
@@ -686,22 +666,10 @@ function handleMessage(data, port) {
                 };
             });
             
-            // Multi-terminal stability: Replace ONLY plots from THIS port.
-            // Archived plots (port === 'archive') are kept so the gallery history
-            // survives an R restart; a live plot with the same id supersedes its archive.
-            const otherPlots = plots.filter(p => p.port && p.port !== port);
-            const taggedIncoming = incomingPlots.map(np => ({ ...np, port }));
-            // IDs are "r-<timestamp>" or "jl-<timestamp>"; parseInt("r-...") = NaN
-            // so strip the prefix before sorting to restore chronological order.
-            const idNum = id => Number(String(id).replace(/^[a-z]+-/i, '')) || 0;
-            const byId = new Map();
-            for (const p of [...otherPlots, ...taggedIncoming]) {
-                const prev = byId.get(String(p.id));
-                if (!prev || (prev.port === 'archive' && p.port !== 'archive')) {
-                    byId.set(String(p.id), p);
-                }
-            }
-            plots = Array.from(byId.values()).sort((a,b) => idNum(a.id) - idNum(b.id));
+            // Multi-terminal stability + archive survival: handled by the typed,
+            // unit-tested core (keeps other live ports, keeps archived plots, and
+            // lets a live plot supersede its archived copy of the same id).
+            plots = window.RPlotCore.mergePlotLists(plots, incomingPlots, port);
 
             rehydratePlots();
             persistArchive();

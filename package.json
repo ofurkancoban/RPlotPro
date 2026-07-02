@@ -113,8 +113,11 @@
   "scripts": {
     "vscode:prepublish": "npm run sync-version && npm run compile",
     "sync-version": "node scripts/sync-version.js",
-    "compile": "tsc -p ./",
+    "compile": "tsc -p ./ && npm run build:webview",
+    "build:webview": "esbuild webview/src/index.ts --bundle --format=iife --global-name=RPlotCore --target=es2020 --outfile=webview/vendor/rplot-core.js",
     "watch": "tsc -watch -p ./",
+    "compile:webview-tests": "tsc -p tsconfig.webview.json",
+    "test:unit": "npm run compile:webview-tests && mocha --ui tdd \"out-webview/**/*.test.js\"",
     "pretest": "npm run compile",
     "test": "vscode-test",
     "package": "vsce package"
@@ -125,6 +128,7 @@
     "@types/vscode": "^1.75.0",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
+    "esbuild": "^0.23.0",
     "mocha": "^10.7.3",
     "typescript": "^5.0.0"
   }

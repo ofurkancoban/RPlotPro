@@ -7,3 +7,6 @@ task.md
 .config/
 .vscode-test/
 out/test/
+out-webview/
+webview/src/*.js
+webview/src/*.js.map
