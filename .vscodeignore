@@ -8,6 +8,7 @@ webview/src/**
 out/test/**
 out-webview/**
 tsconfig.webview.json
+tsconfig.main.json
 node_modules/**
 **/*.map
 **/*.ts

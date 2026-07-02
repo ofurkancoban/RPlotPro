@@ -154,8 +154,9 @@
     "build:webview": "esbuild webview/src/main.ts --bundle --format=iife --target=es2020 --outfile=webview/main.js",
     "watch": "tsc -watch -p ./",
     "compile:webview-tests": "tsc -p tsconfig.webview.json",
+    "typecheck:main": "tsc -p tsconfig.main.json",
     "test:unit": "npm run compile:webview-tests && mocha --ui tdd \"out-webview/**/*.test.js\"",
-    "pretest": "npm run compile",
+    "pretest": "npm run compile && npm run typecheck:main",
     "test": "vscode-test",
     "package": "vsce package"
   },

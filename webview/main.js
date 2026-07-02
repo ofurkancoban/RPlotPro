@@ -626,7 +626,7 @@
         portLanguages.delete(p);
         updateConnectionStatus(activeSockets.size > 0);
         log(`Closed port ${p}`);
-        if (!socket._intentionalClose) scheduleReconnect(p, lang);
+        if (!socket._intentionalClose) scheduleReconnect(p);
       };
       socket.onerror = (e) => {
         if (heartbeat) clearInterval(heartbeat);
@@ -1185,7 +1185,7 @@
     listEl.classList.toggle("is-split-mode", isSplitMode);
     if (thumbObserver) thumbObserver.disconnect();
     const badge = document.getElementById("countBadge");
-    if (badge) badge.textContent = plots.length;
+    if (badge) badge.textContent = String(plots.length);
     if (plots.length === 0) {
       listEl.innerHTML = '<div style="padding:20px;text-align:center;font-size:11px;opacity:0.5; font-style: italic;">No history</div>';
       return;

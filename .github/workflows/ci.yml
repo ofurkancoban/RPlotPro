@@ -27,6 +27,9 @@ jobs:
       - name: Compile (type-check)
         run: npm run compile
 
+      - name: Type-check webview entry (main.ts)
+        run: npm run typecheck:main
+
       - name: Unit tests (webview core)
         run: npm run test:unit
 

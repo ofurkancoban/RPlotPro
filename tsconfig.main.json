@@ -1,0 +1,15 @@
+{
+    "//": "Lenient type-check for the ported webview entry (webview/src/main.ts). Not strict yet: noImplicitAny/strictNullChecks stay off so the DOM-heavy ported JS is manageable, but this still catches undeclared identifiers (the startX/startY class of strict-mode bug), wrong argument counts, bad Promise types, etc. Tighten module by module by enabling stricter flags here as main.ts is annotated.",
+    "compilerOptions": {
+        "noEmit": true,
+        "target": "es2020",
+        "module": "esnext",
+        "moduleResolution": "node",
+        "lib": ["es2020", "dom"],
+        "strict": false,
+        "noImplicitAny": false,
+        "esModuleInterop": true,
+        "skipLibCheck": true
+    },
+    "include": ["webview/src/main.ts"]
+}

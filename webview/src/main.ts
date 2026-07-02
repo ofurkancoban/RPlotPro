@@ -2,6 +2,25 @@ import * as RPlotCore from './index';
 // Provided by the VS Code webview host at runtime.
 declare const acquireVsCodeApi: any;
 
+// Gradual-typing seam for this ported webview script. getElementById() returns the
+// generic HTMLElement, but the code knows the concrete subtype (img/input/canvas) at
+// each call, and a few expando flags are stashed on DOM nodes. Rather than cast every
+// site, the accessed members are declared as optional here so the file type-checks at
+// the lenient bar (which still catches undeclared identifiers, wrong arg counts, etc.).
+// Tighten this module by module: replace a group of these with real casts, then delete
+// the corresponding lines below.
+declare global {
+    interface Window { jspdf?: any; jsPDF?: any; }
+    interface WebSocket { _intentionalClose?: boolean; }
+    interface EventTarget { tagName?: any; isContentEditable?: any; value?: any; closest?: any; }
+    interface Element { style?: any; src?: any; value?: any; }
+    interface HTMLElement {
+        src?: any; value?: any; disabled?: any; getContext?: any;
+        naturalWidth?: any; naturalHeight?: any; width?: any; height?: any;
+        pendingSource?: any; hasPanListener?: any; hasDragListener?: any; hasListener?: any;
+    }
+}
+
 const vscode = acquireVsCodeApi();
 let plots = [];
 const state = vscode.getState() || {};
@@ -466,7 +485,7 @@ function connectToPort(port, language) {
             log(`Closed port ${p}`);
             // Auto-reconnect on an unexpected drop (R busy, transient network) so the
             // view recovers on its own instead of staying "Offline" until R restarts.
-            if (!socket._intentionalClose) scheduleReconnect(p, lang);
+            if (!socket._intentionalClose) scheduleReconnect(p);
         };
 
         socket.onerror = (e) => {
@@ -841,7 +860,7 @@ function updateConnectionStatus(connected) {
                 activeText.style.fontSize = '10px';
                 logosContainer.appendChild(activeText);
             } else {
-                sortedLangs.forEach(lang => {
+                sortedLangs.forEach((lang: any) => {
                     const logoSvg = LOGOS[lang.toLowerCase()];
                     if (logoSvg) {
                         const div = document.createElement('div');
@@ -861,7 +880,7 @@ function updateConnectionStatus(connected) {
 }
 
 
-function addPlot(plotUrl, metadata = {}, port) {
+function addPlot(plotUrl, metadata: any = {}, port?) {
     const pid = metadata.id ? String(metadata.id) : String(Date.now());
     
     // Deduplication check: if plot already exists, treat as update
@@ -1148,7 +1167,7 @@ function updatePlotList() {
     if (thumbObserver) thumbObserver.disconnect();
     
     const badge = document.getElementById('countBadge');
-    if (badge) badge.textContent = plots.length;
+    if (badge) badge.textContent = String(plots.length);
 
     if (plots.length === 0) {
         listEl.innerHTML = '<div style="padding:20px;text-align:center;font-size:11px;opacity:0.5; font-style: italic;">No history</div>';
@@ -2643,8 +2662,8 @@ function getCombinedPlotBlob(plot, callback, opts = {}) {
     img.src = plot.data;
 }
 
-async function getSplitCombinedBlob(plotL, plotR, callback, opts = {}) {
-    const loadImg = (url) => new Promise((res, rej) => {
+async function getSplitCombinedBlob(plotL, plotR, callback, opts: any = {}) {
+    const loadImg = (url): Promise<HTMLImageElement> => new Promise<HTMLImageElement>((res, rej) => {
         const img = new Image();
         img.crossOrigin = "anonymous";
         img.onload = () => res(img);
@@ -2688,7 +2707,7 @@ async function getSplitCombinedBlob(plotL, plotR, callback, opts = {}) {
 }
 
 async function drawAnno(ctx, data, x, y, w, h) {
-    return new Promise((res) => {
+    return new Promise<void>((res) => {
         const img = new Image();
         img.onload = () => {
             ctx.drawImage(img, x, y, w, h);
@@ -2711,7 +2730,7 @@ async function generateSplitCompositeSVG(plotL, plotR) {
             });
         };
 
-        const loadSize = (url) => new Promise((res) => {
+        const loadSize = (url): Promise<{ w: number; h: number }> => new Promise((res) => {
             const img = new Image();
             img.onload = () => res({ w: img.naturalWidth || 800, h: img.naturalHeight || 600 });
             img.onerror = () => res({ w: 800, h: 600 });
