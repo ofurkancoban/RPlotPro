@@ -350,8 +350,14 @@
   var leftIndex = typeof state.leftIndex === "number" ? state.leftIndex : -1;
   var rightIndex = typeof state.rightIndex === "number" ? state.rightIndex : -1;
   var isDraggingDivider = false;
-  var isDarkMode = false;
+  function detectVsCodeDark() {
+    const c = document.body.classList;
+    return c.contains("vscode-dark") || c.contains("vscode-high-contrast");
+  }
+  var darkModeUserSet = typeof state.darkMode === "boolean";
+  var isDarkMode = darkModeUserSet ? state.darkMode : detectVsCodeDark();
   var lastCanvasData = /* @__PURE__ */ new Map();
+  var plotZoom = state.plotZoom ? new Map(Object.entries(state.plotZoom)) : /* @__PURE__ */ new Map();
   var isAnnotating = false;
   var currentTool = "pencil";
   var currentColor = "#ff4757";
@@ -488,6 +494,9 @@
         break;
       case "highlight_source":
         highlightPlotsForSource(message.file, message.line);
+        break;
+      case "toggle_annotation":
+        toggleAnnotationMode();
         break;
       case "restore_meta":
         applyRestoredMeta(message.meta);
@@ -1137,7 +1146,8 @@
     const noteClass = plot.note ? "has-note" : "";
     const favoriteTitle = plot.isFavorite ? "Remove from favorites" : "Add to favorites";
     const noteTitle = plot.note ? "Edit note" : "Add note";
-    let html = '<div class="plot-item ' + isActive + " " + splitClass + '" id="plot-item-' + index + '" ';
+    const annoClass = lastCanvasData.has(String(plot.id)) ? "has-annotation" : "";
+    let html = '<div class="plot-item ' + isActive + " " + splitClass + " " + annoClass + '" id="plot-item-' + index + '" ';
     html += 'onclick="showPlot(' + index + ')" ';
     html += 'draggable="true" ';
     html += 'ondragstart="handleDragStart(event, ' + index + ')" ';
@@ -1148,6 +1158,7 @@
     }
     const src = plotUrls.get(plot.id) || "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMSIgaGVpZ2h0PSIxIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjwvc3ZnPg==";
     html += '<img class="lazy-thumb" data-id="' + plot.id + '" src="' + src + '" loading="lazy" alt="Plot ' + (index + 1) + '" id="thumb-' + index + '"/>';
+    html += '<div class="annotation-badge" title="Annotated (included in exports)">\u270E</div>';
     html += '<div class="thumbnail-footer">';
     html += '<div class="plot-meta">';
     html += '<div class="plot-index" style="font-weight:600">Plot ' + (index + 1) + "</div>";
@@ -1236,6 +1247,9 @@
             plotImage2.style.display = "block";
             if (wrapper) {
               wrapper.style.display = "inline-block";
+              const z = plotZoom.get(String(pid)) || (vscode.getState() || {}).zoomLevel || "fit";
+              wrapper.classList.remove("zoom-fit", "zoom-50", "zoom-75", "zoom-100", "zoom-200");
+              wrapper.classList.add("zoom-" + z);
               updatePlotDimensions("mainMediaWrapper");
             }
             document.getElementById("emptyState").style.display = "none";
@@ -1272,6 +1286,7 @@
   }
   function toggleDarkMode() {
     isDarkMode = !isDarkMode;
+    darkModeUserSet = true;
     document.body.classList.toggle("dark-mode", isDarkMode);
     updateDarkModeUI();
     const currentState = vscode.getState() || {};
@@ -1309,6 +1324,10 @@
     showZoomNotification(newZoom);
     if (!isSplitMode) {
       vscode.setState({ ...vscode.getState(), zoomLevel: newZoom });
+      if (currentIndex >= 0 && plots[currentIndex]) {
+        plotZoom.set(String(plots[currentIndex].id), newZoom);
+        saveState();
+      }
     }
     if (isSplitMode) {
       if (leftIndex >= 0) restoreAnnotation(plots[leftIndex].id, "leftAnnotationCanvas");
@@ -1823,6 +1842,7 @@
       leftIndex,
       rightIndex,
       annotations: lastCanvasData.size > 0 ? Object.fromEntries(lastCanvasData) : void 0,
+      plotZoom: plotZoom.size > 0 ? Object.fromEntries(plotZoom) : void 0,
       palette: paletteState
     });
   }
@@ -1974,6 +1994,8 @@
     }
     if (isAnnotating) {
       setupActiveCanvas();
+    } else {
+      updatePlotList();
     }
   }
   var orientationSwitchTimer = null;
@@ -2443,6 +2465,15 @@
     document.body.classList.add("dark-mode");
   }
   updateDarkModeUI();
+  new MutationObserver(() => {
+    if (darkModeUserSet) return;
+    const shouldDark = detectVsCodeDark();
+    if (shouldDark !== isDarkMode) {
+      isDarkMode = shouldDark;
+      document.body.classList.toggle("dark-mode", isDarkMode);
+      updateDarkModeUI();
+    }
+  }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
   refreshLayout();
   setDrawColor(currentColor);
   initCustomColorPicker();
@@ -2456,7 +2487,39 @@
           e.preventDefault();
           redoAnnotation();
         }
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        toggleAnnotationMode();
       }
+      return;
+    }
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    switch (e.key) {
+      case "ArrowLeft":
+        e.preventDefault();
+        previousPlot();
+        break;
+      case "ArrowRight":
+        e.preventDefault();
+        nextPlot();
+        break;
+      case "a":
+      case "A":
+        e.preventDefault();
+        toggleAnnotationMode();
+        break;
+      case "e":
+      case "E":
+        e.preventDefault();
+        exportPlot();
+        break;
+      case "d":
+      case "D":
+        e.preventDefault();
+        toggleDarkMode();
+        break;
     }
   });
   vscode.postMessage({ command: "request_config" });
