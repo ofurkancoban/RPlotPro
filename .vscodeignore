@@ -1,0 +1,16 @@
+.vscode/**
+.vscode-test/**
+.vscode-test.mjs
+.github/**
+src/**
+out/test/**
+node_modules/**
+**/*.map
+**/*.ts
+**/tsconfig.json
+**/.eslintrc.json
+**/*.vsix
+publish.sh
+release_notes.md
+image/**
+r-plot-pro-*.vsix

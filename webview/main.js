@@ -227,6 +227,7 @@ function debounce(func, wait) {
 const activeSockets = new Map(); // port -> WebSocket
 const portLanguages = new Map(); // port -> language
 const desiredPorts = new Map();      // port -> language: ports we want to stay connected to
+const portUrls = new Map();          // port -> ws URL resolved by the extension (Remote-SSH/WSL/Codespaces forwarding)
 const reconnectTimers = new Map();   // port -> timeout id (pending reconnect)
 const reconnectAttempts = new Map(); // port -> consecutive failed attempts
 const MAX_RECONNECT = 8;             // give up after this many tries (server truly gone)
@@ -275,7 +276,11 @@ function updateConnections(backends) {
     // Remember which ports we want to stay connected to, so an unexpected drop can
     // be told apart from a backend that genuinely went away (auto-reconnect).
     desiredPorts.clear();
-    for (const b of backends) desiredPorts.set(Number(b.port), b.language);
+    for (const b of backends) {
+        desiredPorts.set(Number(b.port), b.language);
+        // Remember the forwarded URL the extension resolved for this port, if any.
+        if (b.wsUrl) portUrls.set(Number(b.port), b.wsUrl);
+    }
 
     // 1. Close connections for ports no longer in the list
     for (const [port, socket] of activeSockets) {
@@ -286,6 +291,7 @@ function updateConnections(backends) {
             socket.close();
             activeSockets.delete(port);
             portLanguages.delete(port);
+            portUrls.delete(port);
         }
     }
     
@@ -327,7 +333,9 @@ function broadcastToBackends(data, targetPort = null) {
 }
 
 function connectToPort(port, language) {
-    const url = 'ws://127.0.0.1:' + port;
+    // Prefer the URL the extension resolved via asExternalUri (handles Remote-SSH,
+    // WSL, Dev Containers and Codespaces port forwarding); fall back to loopback.
+    const url = portUrls.get(Number(port)) || ('ws://127.0.0.1:' + port);
     log(`Connecting to ${url}...`);
     
     try {

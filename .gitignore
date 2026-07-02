@@ -5,3 +5,5 @@ task.md
 .gitignore
 *.env
 .config/
+.vscode-test/
+out/test/

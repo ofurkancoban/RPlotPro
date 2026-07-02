@@ -3,6 +3,31 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 
+type Backend = { port: number; language?: string };
+type ResolvedBackend = Backend & { wsUrl: string };
+
+// Resolve each backend's loopback port to a URL the webview can actually dial.
+// The webview always runs in the local UI process, but with Remote-SSH, WSL,
+// Dev Containers or Codespaces the R server (and its port) live on the remote
+// host, so a raw ws://127.0.0.1:PORT never reaches it. asExternalUri asks VS Code
+// to forward/tunnel the port and returns the address that is valid from the UI
+// side; on a purely local session it returns the same loopback address.
+async function resolveBackends(backends: Backend[]): Promise<ResolvedBackend[]> {
+    return Promise.all(backends.map(async (b) => {
+        let wsUrl = `ws://127.0.0.1:${b.port}`;
+        try {
+            const external = await vscode.env.asExternalUri(
+                vscode.Uri.parse(`http://127.0.0.1:${b.port}`)
+            );
+            const scheme = external.scheme === 'https' ? 'wss' : 'ws';
+            wsUrl = `${scheme}://${external.authority}`;
+        } catch (_) {
+            // Fall back to the loopback address (expected on local sessions).
+        }
+        return { ...b, wsUrl };
+    }));
+}
+
 const RPROFILE_MARKER_START = '# [R Plot Pro]';
 const RPROFILE_MARKER_END   = '# [R Plot Pro END]';
 const RPROFILE_SNIPPET = `${RPROFILE_MARKER_START}
@@ -136,7 +161,8 @@ export function activate(context: vscode.ExtensionContext) {
                 if (message.command === 'request_config') {
                     const backends = plotProvider.getBackends();
                     if (backends.length > 0) {
-                        panel.webview.postMessage({ command: 'set_ports', backends: backends });
+                        resolveBackends(backends).then(rb =>
+                            panel.webview.postMessage({ command: 'set_ports', backends: rb }));
                     }
                 } else if (message.command === 'open_new_window') {
                     vscode.commands.executeCommand('rPlotViewer.openGallery');
@@ -167,7 +193,8 @@ export function activate(context: vscode.ExtensionContext) {
             // Proactively send current ports if available
             const backends = plotProvider.getBackends();
             if (backends.length > 0) {
-                panel.webview.postMessage({ command: 'set_ports', backends: backends });
+                resolveBackends(backends).then(rb =>
+                    panel.webview.postMessage({ command: 'set_ports', backends: rb }));
             }
         })
     );
@@ -221,10 +248,10 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    const discoverPorts = () => {
+    const discoverPorts = async () => {
         const backends = plotProvider.getBackends();
         if (backends.length > 0) {
-            plotProvider.postMessage({ command: 'set_ports', backends });
+            plotProvider.postMessage({ command: 'set_ports', backends: await resolveBackends(backends) });
         }
     };
 
@@ -442,10 +469,10 @@ class PlotViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private checkAndSendConfig() {
+    private async checkAndSendConfig() {
         const backends = this.getBackends();
         if (backends.length > 0) {
-            this.postMessage({ command: 'set_ports', backends });
+            this.postMessage({ command: 'set_ports', backends: await resolveBackends(backends) });
         }
     }
 
