@@ -2138,6 +2138,8 @@
     }
   }
   var startImageData = null;
+  var startX = 0;
+  var startY = 0;
   function handleDrawStart(e) {
     if (!isAnnotating || !activeCtx || !activeCanvas) return;
     isDrawing = true;

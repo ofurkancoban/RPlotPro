@@ -2356,6 +2356,10 @@ function initCustomColorPicker() {
 }
 
 let startImageData = null;
+// Annotation drag origin (canvas coords). Declared at module scope because the draw
+// handlers share it; in the old classic script these were implicit globals, which
+// throw in the strict-mode bundle.
+let startX = 0, startY = 0;
 
 function handleDrawStart(e) {
     if (!isAnnotating || !activeCtx || !activeCanvas) return;
