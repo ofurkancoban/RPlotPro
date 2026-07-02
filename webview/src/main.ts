@@ -303,6 +303,7 @@ window.addEventListener('message', event => {
         case 'clear_plots': clearAllPlots(); break;
         case 'export_plot': exportPlot(); break;
         case 'do_export': exportAsFormat(message.format, message); break;
+        case 'highlight_source': highlightPlotsForSource(message.file, message.line); break;
         case 'restore_meta': applyRestoredMeta(message.meta); break;
         case 'restore_archive': applyRestoredArchive(message.plots); break;
         case 'info': console.info(message.text); break;
@@ -1389,6 +1390,12 @@ function updateControls() {
     
     document.getElementById('exportBtn').disabled = !hasPlots;
     document.getElementById('copyBtn').disabled = !hasPlots;
+    // Copy-as-SVG only makes sense for a single vector plot.
+    const copySvgBtn = document.getElementById('copySvgBtn');
+    if (copySvgBtn) {
+        const cur = currentIndex >= 0 ? plots[currentIndex] : null;
+        copySvgBtn.disabled = !hasPlots || isSplitMode || !cur || cur.format !== 'svg';
+    }
     const codeBtn = document.getElementById('codeBtn');
     if (codeBtn) codeBtn.disabled = !hasPlots || isSplitMode;
     document.getElementById('newWindowBtn').disabled = !hasPlots;
@@ -1410,6 +1417,38 @@ function updateControls() {
 
 function previousPlot() { if (currentIndex > 0) showPlot(currentIndex - 1); }
 function nextPlot() { if (currentIndex < plots.length - 1) showPlot(currentIndex + 1); }
+
+// Reverse of the plot -> source jump: the extension reports the editor's file and
+// cursor line, and we glow the gallery thumbnails whose captured srcref covers that
+// line. Purely a highlight, so it never steals the main view.
+function normPath(p) { return String(p || '').replace(/\\/g, '/').toLowerCase(); }
+function basePath(p) { const n = normPath(p); return n.substring(n.lastIndexOf('/') + 1); }
+
+function highlightPlotsForSource(file, line) {
+    document.querySelectorAll('.plot-item.source-linked').forEach(el => el.classList.remove('source-linked'));
+    if (!file || typeof line !== 'number') return;
+
+    const targetFull = normPath(file);
+    const targetBase = basePath(file);
+    let firstIdx = -1;
+
+    plots.forEach((plot, idx) => {
+        if (!plot.srcFile || typeof plot.srcLine1 !== 'number') return;
+        const sameFile = normPath(plot.srcFile) === targetFull || basePath(plot.srcFile) === targetBase;
+        if (!sameFile) return;
+        const l1 = plot.srcLine1;
+        const l2 = (typeof plot.srcLine2 === 'number' && plot.srcLine2 >= l1) ? plot.srcLine2 : l1;
+        if (line < l1 || line > l2) return;
+        const el = document.getElementById('plot-item-' + idx);
+        if (el) el.classList.add('source-linked');
+        if (firstIdx < 0) firstIdx = idx;
+    });
+
+    if (firstIdx >= 0) {
+        const el = document.getElementById('plot-item-' + firstIdx);
+        if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+}
 
 function clearAllPlots() {
      broadcastToBackends({ type: 'clear_all' });
@@ -1451,6 +1490,27 @@ function copyToClipboard() {
         getSplitCombinedBlob(plots[leftIndex], plots[rightIndex], processBlob);
     } else {
         getCombinedPlotBlob(plots[currentIndex], processBlob);
+    }
+}
+
+// Copy the plot's raw SVG markup to the clipboard as text, so it can be pasted into
+// a vector editor (Illustrator/Inkscape/Figma) or a source file. Vector plots only.
+async function copySvgToClipboard() {
+    if (currentIndex < 0 || plots.length === 0) return;
+    const plot = plots[currentIndex];
+    if (!plot || plot.format !== 'svg' || !plot.data) {
+        vscode.postMessage({ command: 'info', text: 'Copy as SVG: this plot is not a vector image' });
+        return;
+    }
+    try {
+        const res = await fetch(plot.data);
+        const svgText = await res.text();
+        await navigator.clipboard.writeText(svgText);
+        log('SVG markup copied to clipboard');
+        vscode.postMessage({ command: 'info', text: 'SVG copied to clipboard' });
+    } catch (err) {
+        log('Copy as SVG failed: ' + err);
+        vscode.postMessage({ command: 'info', text: 'Copy as SVG failed: clipboard access required' });
     }
 }
 
@@ -2708,6 +2768,7 @@ Object.assign(window as any, {
     closeTextModal,
     confirmTextAnnotation,
     copyToClipboard,
+    copySvgToClipboard,
     deletePlot,
     exportPlot,
     focusPane,
