@@ -11,5 +11,7 @@
         "sourceMap": false,
         "types": ["node", "mocha"]
     },
-    "include": ["webview/src/**/*.ts"]
+    "include": ["webview/src/**/*.ts"],
+    "comment": "main.ts is the esbuild bundle entry (ported JS, not strict-typed); it is built by build:webview, not type-checked here.",
+    "exclude": ["webview/src/main.ts"]
 }
