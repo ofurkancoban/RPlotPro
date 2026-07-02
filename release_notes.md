@@ -1,5 +1,26 @@
 # R Plot Pro — Release Notes
 
+## v0.48.0 — Remote, exports, gallery archive, code actions & reliable attach
+
+### New
+- **Remote-SSH / WSL / Dev Containers / Codespaces support (#5)** — the webview now reaches the R WebSocket server on a remote host via `asExternalUri` port forwarding (with `ws:`/`wss:` CSP), instead of a loopback address that never connects.
+- **Export presets** — PNG (Screen 1x, High DPI 2x, Publication 3x), PNG/PDF Slide 16:9 (1920×1080), and SVG. New offline **PDF export** (bundled jsPDF, no runtime dependency).
+- **Offline gallery archive** — plot images + metadata are saved to disk, so the gallery survives an R-session shutdown or a VS Code restart.
+- **Durable favorites & notes** — persisted to workspace storage and restored by plot id.
+- **Per-plot code actions** — a toolbar Code menu: Copy Code, Reveal Code in Console, Run Code Again, Open Source File. The R server captures the originating expression (deparse + srcref).
+- **Report Issue command** — opens a prefilled GitHub issue with environment info and the recent log.
+- **Configurable port range** — `rPlotViewer.minPort` / `maxPort` for strict firewalls.
+- **Force-attach command** — “R Plot Pro: Attach to Terminal” for pre-existing or unrecognised terminals.
+
+### Reliability
+- **Julia startup.jl hook** — mirrors the R `.Rprofile` hook so Julia auto-captures at startup with no timing gap (offered lazily on first Julia use).
+- **Shell-integration launch detection** — detects an interactive R/Julia launch by the actual command (not the terminal name) and injects on a clean prompt.
+- **Event-driven sentinel** — polls terminals only after activity, then stops (idle CPU drops to zero).
+- **Fixes** — escaped a regex bug that made startup-hook removal a silent no-op; guarded Julia against double-server-start.
+
+### Engineering
+- Single-source version (`scripts/sync-version.js`), structured logging + Output channel, GitHub Actions CI (Linux/macOS/Windows), and a typed, unit-tested webview core (esbuild) for the reconnect + gallery-merge logic. 45 automated tests.
+
 ## v0.47.0 — Windows, remote and connection fixes
 
 **Resolves the open Windows / remote / connection issues (#3, #4, #5, #6).**
