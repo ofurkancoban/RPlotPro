@@ -353,13 +353,15 @@ function activate(context) {
             }
         };
         // Event-driven Sentinel: instead of polling terminals forever, we scan only
-        // for a short window after terminal activity (open/switch). A shell may report
-        // its name as "R" only once the R session actually starts, so we still need a
-        // few scans to catch delayed starts (Mac/zsh) — but the poll auto-stops when
-        // idle, dropping CPU usage to zero once everything is attached.
+        // for a window after terminal activity. A shell may report its name as "R"
+        // only once the R session actually starts, so we still need a few scans to
+        // catch delayed manual starts (Mac/zsh) — but the poll auto-stops when idle,
+        // dropping CPU usage to zero once everything is attached. Any terminal event
+        // (open, switch, or shell-integration state change) re-opens the window, so a
+        // user who types `R` long after opening a terminal is still caught.
         let sentinelTimer;
         let sentinelUntil = 0;
-        const kickSentinel = (windowMs = 30000) => {
+        const kickSentinel = (windowMs = 120000) => {
             sentinelUntil = Date.now() + windowMs;
             if (sentinelTimer)
                 return;
@@ -388,6 +390,17 @@ function activate(context) {
                 kickSentinel();
             }
         }));
+        // Shell-integration state changes fire when a command runs in a terminal
+        // (e.g. the user launches R), re-opening the scan window even without a
+        // terminal open/switch — this closes the "idle then start R" gap.
+        if (vscode.window.onDidChangeTerminalState) {
+            context.subscriptions.push(vscode.window.onDidChangeTerminalState(term => {
+                if (term) {
+                    tryInject(term);
+                    kickSentinel();
+                }
+            }));
+        }
         context.subscriptions.push(vscode.commands.registerCommand('rPlotViewer.attach', () => {
             if (vscode.window.activeTerminal) {
                 tryInject(vscode.window.activeTerminal, true);
