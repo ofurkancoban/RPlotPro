@@ -2390,9 +2390,10 @@ function handleDrawStart(e) {
     if (!isAnnotating || !activeCtx || !activeCanvas) return;
     isDrawing = true;
     const rect = activeCanvas.getBoundingClientRect();
-    startX = (e.clientX - rect.left) * (activeCanvas.width / rect.width);
-    startY = (e.clientY - rect.top) * (activeCanvas.height / rect.height);
-    
+    const p = window.RPlotCore.toCanvasCoords(e.clientX, e.clientY, rect, activeCanvas.width, activeCanvas.height);
+    startX = p.x;
+    startY = p.y;
+
     startImageData = activeCtx.getImageData(0, 0, activeCanvas.width, activeCanvas.height);
     
     activeCtx.beginPath();
@@ -2406,9 +2407,10 @@ function handleDrawStart(e) {
 function handleDrawMove(e) {
     if (!isDrawing || !activeCtx || !activeCanvas) return;
     const rect = activeCanvas.getBoundingClientRect();
-    const currX = (e.clientX - rect.left) * (activeCanvas.width / rect.width);
-    const currY = (e.clientY - rect.top) * (activeCanvas.height / rect.height);
-    
+    const pos = window.RPlotCore.toCanvasCoords(e.clientX, e.clientY, rect, activeCanvas.width, activeCanvas.height);
+    const currX = pos.x;
+    const currY = pos.y;
+
     if (currentTool === 'pencil') {
         activeCtx.lineTo(currX, currY);
         activeCtx.stroke();
@@ -2421,10 +2423,11 @@ function handleDrawMove(e) {
 function handleDrawEnd(e) {
     if (!isDrawing) return;
     isDrawing = false;
-    
+
     const rect = activeCanvas.getBoundingClientRect();
-    const currX = (e.clientX - rect.left) * (activeCanvas.width / rect.width);
-    const currY = (e.clientY - rect.top) * (activeCanvas.height / rect.height);
+    const pos = window.RPlotCore.toCanvasCoords(e.clientX, e.clientY, rect, activeCanvas.width, activeCanvas.height);
+    const currX = pos.x;
+    const currY = pos.y;
 
     if (currentTool === 'text') {
         // Use custom modal instead of window.prompt (which is blocked in VS Code)
@@ -2439,30 +2442,19 @@ function handleDrawEnd(e) {
 }
 
 function drawArrow(ctx, fromX, fromY, toX, toY) {
-    const headLength = 20;
-    const angle = Math.atan2(toY - fromY, toX - fromX);
-    const headAngle = Math.PI / 6; // 30 degrees offset = 60 degrees total (Equilateral)
-    
-    // Stop the line slightly before the tip so the head defines the sharp point
-    const lineEndX = toX - 5 * Math.cos(angle);
-    const lineEndY = toY - 5 * Math.sin(angle);
-    
+    // Vertex math lives in the typed, unit-tested core.
+    const g = window.RPlotCore.arrowGeometry(fromX, fromY, toX, toY);
+
     ctx.beginPath();
     ctx.moveTo(fromX, fromY);
-    ctx.lineTo(lineEndX, lineEndY);
+    ctx.lineTo(g.lineEndX, g.lineEndY);
     ctx.stroke();
-    
+
     // Draw the sharp arrow head
     ctx.beginPath();
-    ctx.moveTo(toX, toY); // This is the real tip
-    ctx.lineTo(
-        toX - headLength * Math.cos(angle - headAngle), 
-        toY - headLength * Math.sin(angle - headAngle)
-    );
-    ctx.lineTo(
-        toX - headLength * Math.cos(angle + headAngle), 
-        toY - headLength * Math.sin(angle + headAngle)
-    );
+    ctx.moveTo(g.tipX, g.tipY); // the real tip
+    ctx.lineTo(g.leftX, g.leftY);
+    ctx.lineTo(g.rightX, g.rightY);
     ctx.closePath();
     ctx.fill();
 }

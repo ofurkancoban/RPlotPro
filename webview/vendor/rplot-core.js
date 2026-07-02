@@ -22,11 +22,13 @@ var RPlotCore = (() => {
   var src_exports = {};
   __export(src_exports, {
     ReconnectManager: () => ReconnectManager,
+    arrowGeometry: () => arrowGeometry,
     aspectRatio: () => aspectRatio,
     computeExportCanvas: () => computeExportCanvas,
     computePlotDimensions: () => computePlotDimensions,
     idNum: () => idNum,
-    mergePlotLists: () => mergePlotLists
+    mergePlotLists: () => mergePlotLists,
+    toCanvasCoords: () => toCanvasCoords
   });
 
   // webview/src/reconnect.ts
@@ -153,6 +155,29 @@ var RPlotCore = (() => {
     const cw = natW * scale;
     const ch = natH * scale;
     return { cw, ch, dx: 0, dy: 0, dw: cw, dh: ch };
+  }
+
+  // webview/src/annotation.ts
+  function toCanvasCoords(clientX, clientY, rect, canvasW, canvasH) {
+    return {
+      x: (clientX - rect.left) * (canvasW / rect.width),
+      y: (clientY - rect.top) * (canvasH / rect.height)
+    };
+  }
+  function arrowGeometry(fromX, fromY, toX, toY, headLength = 20, tipInset = 5) {
+    const angle = Math.atan2(toY - fromY, toX - fromX);
+    const headAngle = Math.PI / 6;
+    return {
+      angle,
+      lineEndX: toX - tipInset * Math.cos(angle),
+      lineEndY: toY - tipInset * Math.sin(angle),
+      tipX: toX,
+      tipY: toY,
+      leftX: toX - headLength * Math.cos(angle - headAngle),
+      leftY: toY - headLength * Math.sin(angle - headAngle),
+      rightX: toX - headLength * Math.cos(angle + headAngle),
+      rightY: toY - headLength * Math.sin(angle + headAngle)
+    };
   }
   return __toCommonJS(src_exports);
 })();
