@@ -2,7 +2,7 @@
   "name": "r-plot-pro",
   "displayName": "R Plot Pro",
   "description": "The ultimate R and Julia visualization experience for VS Code. High-performance, real-time, and designed for professionals who demand the best of RStudio and Positron.",
-  "version": "0.47.0",
+  "version": "0.48.0",
   "license": "MIT",
   "publisher": "ofurkancoban",
   "icon": "assets/icon.png",
@@ -54,6 +54,18 @@
       {
         "command": "rPlotViewer.removeFromRprofile",
         "title": "R Plot Pro: Remove .Rprofile Hook"
+      },
+      {
+        "command": "rPlotViewer.removeFromJuliaStartup",
+        "title": "R Plot Pro: Remove Julia startup.jl Hook"
+      },
+      {
+        "command": "rPlotViewer.reportIssue",
+        "title": "R Plot Pro: Report Issue"
+      },
+      {
+        "command": "rPlotViewer.attach",
+        "title": "R Plot Pro: Attach to Terminal"
       }
     ],
     "viewsContainers": {
@@ -92,18 +104,40 @@
           "type": "number",
           "default": 600,
           "description": "Default plot height in pixels"
+        },
+        "rPlotViewer.minPort": {
+          "type": "number",
+          "default": 10000,
+          "description": "Lowest port the R plot server may bind to"
+        },
+        "rPlotViewer.maxPort": {
+          "type": "number",
+          "default": 30000,
+          "description": "Highest port the R plot server may bind to"
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "vscode:prepublish": "npm run sync-version && npm run compile",
+    "sync-version": "node scripts/sync-version.js",
+    "compile": "tsc -p ./ && npm run build:webview",
+    "build:webview": "esbuild webview/src/index.ts --bundle --format=iife --global-name=RPlotCore --target=es2020 --outfile=webview/vendor/rplot-core.js",
+    "watch": "tsc -watch -p ./",
+    "compile:webview-tests": "tsc -p tsconfig.webview.json",
+    "test:unit": "npm run compile:webview-tests && mocha --ui tdd \"out-webview/**/*.test.js\"",
+    "pretest": "npm run compile",
+    "test": "vscode-test",
+    "package": "vsce package"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.6",
     "@types/node": "^18.0.0",
     "@types/vscode": "^1.75.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "esbuild": "^0.23.0",
+    "mocha": "^10.7.3",
     "typescript": "^5.0.0"
   }
 }

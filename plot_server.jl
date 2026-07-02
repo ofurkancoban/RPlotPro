@@ -465,7 +465,13 @@ function start_plot_viewer(port=nothing)
     
     # Force Disable VS Code's internal plot pane
     ENV["JULIA_VSCODE_DISPLAY_PLOTS"] = "false"
-    
+
+    # Do not start a second server if one is already running (e.g. the startup.jl
+    # hook started it before the sentinel injection fires). Mirrors the R guard.
+    if !isnothing(server_task[]) && !istaskdone(server_task[])
+        return
+    end
+
     if isnothing(port)
         port = rand(10000:30000)
     end

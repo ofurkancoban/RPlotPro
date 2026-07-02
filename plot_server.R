@@ -70,6 +70,14 @@ local(
         hook_registered <- FALSE # plot.new hook registered once per server lifetime
         hook_active <- FALSE     # enables/disables the hook without removing it
         plot_new_called <- FALSE # TRUE when plot.new() fired during current expression
+
+        # Source provenance of the top-level expression that produced the current
+        # plot, captured from the task callback and attached to plot metadata so the
+        # webview can offer Copy / Reveal / Run-again / Open-source-file actions.
+        last_expr_code <- ""
+        last_expr_file <- ""
+        last_expr_line1 <- NA_integer_
+        last_expr_line2 <- NA_integer_
         
         # Debug logging. Use a cross-platform temp path (tempdir()) instead of a
         # hardcoded "/tmp", which does not exist on Windows, and swallow warnings
@@ -215,6 +223,16 @@ local(
             for (client in clients) send_binary_to_client(client, "new_plot", raw_data, metadata)
         }
 
+        # Build plot metadata, attaching captured source provenance when available.
+        make_meta <- function(id) {
+            m <- list(id = id, timestamp = format(Sys.time(), "%H:%M:%S"), format = "svg")
+            if (nzchar(last_expr_code)) m$code <- last_expr_code
+            if (nzchar(last_expr_file)) m$srcFile <- last_expr_file
+            if (!is.na(last_expr_line1)) m$srcLine1 <- last_expr_line1
+            if (!is.na(last_expr_line2)) m$srcLine2 <- last_expr_line2
+            m
+        }
+
         process_internal_capture <- function(current_plot, temp_file_path = NULL,
                                              bypass_throttle = FALSE, update_last = FALSE) {
             if (is.null(current_plot)) return()
@@ -242,7 +260,7 @@ local(
                     # lines, points) — replace the last entry instead of adding a new one.
                     if (update_last && length(plots) > 0) {
                         id <- plots[[length(plots)]]$id
-                        plot_metadata <- list(id = id, timestamp = format(Sys.time(), "%H:%M:%S"), format = "svg")
+                        plot_metadata <- make_meta(id)
                         plots[[length(plots)]] <<- plot_metadata
                         recordings[[id]] <<- current_plot
                         raw_plots[[id]] <<- raw_data
@@ -250,7 +268,7 @@ local(
                             send_binary_to_client(client, "update_plot", raw_data, plot_metadata)
                     } else {
                         id <- sprintf("r-%.0f", as.numeric(Sys.time()) * 1000)
-                        plot_metadata <- list(id = id, timestamp = format(Sys.time(), "%H:%M:%S"), format = "svg")
+                        plot_metadata <- make_meta(id)
 
                         if (length(plots) >= 200) {
                             old_id <- plots[[1]]$id
@@ -316,6 +334,27 @@ local(
         }
         
         check_for_new_plot <- function(expr, value, ok, visible) {
+            # Capture the code + source location of the expression that just ran, so
+            # it can be attached to any plot this expression produces.
+            tryCatch({
+                last_expr_code <<- paste(deparse(expr), collapse = "\n")
+                last_expr_file <<- ""
+                last_expr_line1 <<- NA_integer_
+                last_expr_line2 <<- NA_integer_
+                sref <- attr(expr, "srcref")
+                if (!is.null(sref)) {
+                    srcfile <- attr(sref, "srcfile")
+                    if (!is.null(srcfile) && !is.null(srcfile$filename) && nzchar(srcfile$filename)) {
+                        last_expr_file <<- normalizePath(srcfile$filename, mustWork = FALSE)
+                    }
+                    loc <- as.integer(sref)
+                    if (length(loc) >= 3) {
+                        last_expr_line1 <<- loc[1]
+                        last_expr_line2 <<- loc[3]
+                    }
+                }
+            }, error = function(e) {})
+
             new_frame <- isTRUE(plot_new_called)
             plot_new_called <<- FALSE
             safe_capture(bypass_throttle = TRUE,
@@ -345,14 +384,20 @@ local(
                 hook_active <<- TRUE
                 return(invisible(server))
             }
-            if (is.null(port)) port <- sample(10000:30000, 1)
+            # Port range is configurable via the extension (rPlotViewer.minPort/maxPort).
+            port_min <- suppressWarnings(as.integer(Sys.getenv("RPLOT_PORT_MIN", "10000")))
+            port_max <- suppressWarnings(as.integer(Sys.getenv("RPLOT_PORT_MAX", "30000")))
+            if (is.na(port_min) || is.na(port_max) || port_max <= port_min) {
+                port_min <- 10000L; port_max <- 30000L
+            }
+            if (is.null(port)) port <- sample(port_min:port_max, 1)
 
             env_config_path <- Sys.getenv("VSCODE_R_PLOT_CONFIG")
             local_config_file <- if (nzchar(env_config_path)) {
                 if (isTRUE(file.info(env_config_path)$isdir)) file.path(env_config_path, paste0("port_", port, ".json")) else env_config_path
             } else file.path(getwd(), ".r_plot_config.json")
 
-            writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.47.0"), auto_unbox = TRUE), local_config_file)
+            writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.48.0"), auto_unbox = TRUE), local_config_file)
 
             reg.finalizer(.GlobalEnv, function(e) { if (file.exists(local_config_file)) unlink(local_config_file) }, onexit = TRUE)
 
@@ -373,8 +418,8 @@ local(
                             error = function(e2) NULL)
                     }
                     if (is.null(server)) {
-                        port <<- sample(10000:30000, 1)
-                        writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.47.0"), auto_unbox = TRUE), local_config_file)
+                        port <<- sample(port_min:port_max, 1)
+                        writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.48.0"), auto_unbox = TRUE), local_config_file)
                         server <<- startServer(host = "127.0.0.1", port = port, app = list(call = plot_http_handler, onWSOpen = plot_ws_handler))
                     }
                 } else stop(e)
@@ -460,7 +505,7 @@ local(
             for (c in clients) tryCatch(c$send(msg), error = function(e) {})
         }
 
-        .vsc_rplot$version  <- "0.47.0"
+        .vsc_rplot$version  <- "0.48.0"
         .vsc_rplot$run_file <- function(file_path) { utils::source(file_path); invisible(NULL) }
 
         # Direct capture exposed for patched source() — bypasses hook_active so
