@@ -7,3 +7,5 @@ export { mergePlotLists, idNum } from './archive';
 export type { PlotLike } from './archive';
 export { aspectRatio, computePlotDimensions, computeExportCanvas } from './geometry';
 export type { Aspect, PlotDimensions, ExportOpts, ExportCanvas } from './geometry';
+export { toCanvasCoords, arrowGeometry } from './annotation';
+export type { RectLike, Point, ArrowGeometry } from './annotation';
