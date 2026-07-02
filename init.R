@@ -15,7 +15,7 @@ local({
     # This prevents the sentinel (which fires 1-4s after terminal opens) from
     # restarting a healthy server and destroying captured plots.
     # If the extension was updated (version mismatch), stop the old server so
-    # the new code takes effect — the user installed a new vsix.
+    # the new code takes effect - the user installed a new vsix.
     already_running <- tryCatch(
         exists(".vsc_rplot", envir = .GlobalEnv) && !is.null(.vsc_rplot$server),
         error = function(e) FALSE
@@ -23,17 +23,17 @@ local({
     if (already_running) {
         running_version <- tryCatch(.vsc_rplot$version, error = function(e) "")
         if (identical(running_version, this_version)) {
-            return(invisible(NULL))   # same version — leave everything intact
+            return(invisible(NULL))   # same version - leave everything intact
         }
-        # Different version — stop old server gracefully before re-init
+        # Different version - stop old server gracefully before re-init
         tryCatch(.vsc_rplot$stop_plot_viewer(), error = function(e) {})
     }
 
     # Resolve the directory of this script.
     # Priority order:
-    #   1. GlobalEnv$script_dir  — set by the Sentinel injection path
-    #   2. sys.frame()$ofile     — works when sourced directly (e.g. injection fallback)
-    #   3. RPLOT_PRO_INIT env var — set by environmentVariableCollection; used when
+    #   1. GlobalEnv$script_dir  - set by the Sentinel injection path
+    #   2. sys.frame()$ofile     - works when sourced directly (e.g. injection fallback)
+    #   3. RPLOT_PRO_INIT env var - set by environmentVariableCollection; used when
     #      R starts via ~/.Rprofile so sys.frame ofile is unavailable
     script_dir <- tryCatch({
         if (exists("script_dir", envir = .GlobalEnv)) {
@@ -70,7 +70,7 @@ local({
         options(device = null_device)
 
         # Rescue the last plot from any visible device before closing it.
-        # (Only the current display list is recoverable — earlier plots in a
+        # (Only the current display list is recoverable - earlier plots in a
         # multi-plot source() run are gone once overwritten on quartz/X11.)
         rescued_plot <- NULL
         while (dev.cur() > 1) {

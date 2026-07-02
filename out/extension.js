@@ -55,7 +55,7 @@ async function openSourceAt(file, line1, line2) {
         }
     }
     catch (e) {
-        vscode.window.showErrorMessage('R Plot Pro: Could not open source file — ' + (e?.message ?? e));
+        vscode.window.showErrorMessage('R Plot Pro: Could not open source file - ' + (e?.message ?? e));
     }
 }
 // Code-actions from the per-plot dropdown. Returns true if it handled the message.
@@ -132,7 +132,7 @@ function addHookToContent(content, body) {
 function removeHookFromContent(content) {
     if (!content.includes(HOOK_START))
         return { content, removed: false };
-    // Markers contain regex metacharacters ("[", "]") — escape them before use.
+    // Markers contain regex metacharacters ("[", "]") - escape them before use.
     const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(`\\n?${esc(HOOK_START)}[\\s\\S]*?${esc(HOOK_END)}\\n?`, 'g');
     const cleaned = content.replace(re, '\n').replace(/\n{3,}/g, '\n\n').trimEnd();
@@ -181,14 +181,14 @@ async function setupHookIntegration(context, h) {
         return;
     if (context.globalState.get(h.declineKey))
         return;
-    const answer = await vscode.window.showInformationMessage(`R Plot Pro: Add a startup hook to ${h.pretty} so ${h.label} plots are captured instantly when ${h.label} starts — no timing gaps.`, { modal: false }, 'Add hook', "Don't ask again");
+    const answer = await vscode.window.showInformationMessage(`R Plot Pro: Add a startup hook to ${h.pretty} so ${h.label} plots are captured instantly when ${h.label} starts - no timing gaps.`, { modal: false }, 'Add hook', "Don't ask again");
     if (answer === 'Add hook') {
         try {
             installHook(h);
             vscode.window.showInformationMessage(`R Plot Pro: ${h.pretty} updated. Restart ${h.label} to activate instant capture.`);
         }
         catch (e) {
-            vscode.window.showErrorMessage(`R Plot Pro: Could not write ${h.pretty} — ${e.message}`);
+            vscode.window.showErrorMessage(`R Plot Pro: Could not write ${h.pretty} - ${e.message}`);
         }
     }
     else if (answer === "Don't ask again") {
@@ -321,7 +321,7 @@ function activate(context) {
     }
     catch (_) { /* best-effort */ }
     plotProvider.setArchiveFile(path.join(context.globalStorageUri.fsPath, `archive-${configId}.json`));
-    // .Rprofile integration — ask user once, silently skip if already done.
+    // .Rprofile integration - ask user once, silently skip if already done.
     // (Julia's startup.jl hook is offered lazily, the first time Julia is used.)
     setupHookIntegration(context, rHook());
     // Remove-hook commands (accessible via Command Palette)
@@ -445,7 +445,7 @@ function activate(context) {
         // Event-driven Sentinel: instead of polling terminals forever, we scan only
         // for a window after terminal activity. A shell may report its name as "R"
         // only once the R session actually starts, so we still need a few scans to
-        // catch delayed manual starts (Mac/zsh) — but the poll auto-stops when idle,
+        // catch delayed manual starts (Mac/zsh) - but the poll auto-stops when idle,
         // dropping CPU usage to zero once everything is attached. Any terminal event
         // (open, switch, or shell-integration state change) re-opens the window, so a
         // user who types `R` long after opening a terminal is still caught.
@@ -482,7 +482,7 @@ function activate(context) {
         }));
         // Shell-integration state changes fire when a command runs in a terminal
         // (e.g. the user launches R), re-opening the scan window even without a
-        // terminal open/switch — this closes the "idle then start R" gap.
+        // terminal open/switch - this closes the "idle then start R" gap.
         if (vscode.window.onDidChangeTerminalState) {
             context.subscriptions.push(vscode.window.onDidChangeTerminalState(term => {
                 if (term) {

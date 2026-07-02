@@ -254,19 +254,19 @@ This extension works out of the box with no configuration needed. Advanced users
 
 ### 0.47.0 - Windows, remote and connection fixes
 
-- **Fixed: `command 'rPlotViewer.showPlot' not found`** — the Julia extension was a hard `extensionDependencies` entry, so VS Code refused to activate R Plot Pro for users without it, and no commands were registered. Julia support is now optional.
-- **Fixed: `cannot open file '/tmp/rplot_debug.log'` warnings on Windows / remote** — the R server wrote its debug log to a hardcoded `/tmp` path and only caught errors, not warnings. It now uses a cross-platform `tempdir()` path and never surfaces a warning into your R session.
-- **Fixed: connection drops to "Offline" and never recovers** — the plot view now auto-reconnects to a dropped-but-still-live backend with capped backoff, instead of staying offline until R is restarted.
-- **Hardened port recovery** — the "address already in use" fallback no longer relies on Unix-only `lsof`/`kill`; on Windows it retries on a fresh port.
+- **Fixed: `command 'rPlotViewer.showPlot' not found`** - the Julia extension was a hard `extensionDependencies` entry, so VS Code refused to activate R Plot Pro for users without it, and no commands were registered. Julia support is now optional.
+- **Fixed: `cannot open file '/tmp/rplot_debug.log'` warnings on Windows / remote** - the R server wrote its debug log to a hardcoded `/tmp` path and only caught errors, not warnings. It now uses a cross-platform `tempdir()` path and never surfaces a warning into your R session.
+- **Fixed: connection drops to "Offline" and never recovers** - the plot view now auto-reconnects to a dropped-but-still-live backend with capped backoff, instead of staying offline until R is restarted.
+- **Hardened port recovery** - the "address already in use" fallback no longer relies on Unix-only `lsof`/`kill`; on Windows it retries on a fresh port.
 
 ### 0.46.0 - Positron-Grade Multi-Plot Capture
 
-**The most reliable R plot capture engine yet — matches Positron behavior exactly.**
+**The most reliable R plot capture engine yet - matches Positron behavior exactly.**
 
-- **Fixed: First-run single-plot capture** — Root cause identified and eliminated. `installed.packages()` was failing silently during `.Rprofile` startup (utils not yet attached), causing init.R to abort before installing the source patch. Replaced with `requireNamespace()` which is always available at startup.
-- **Fixed: Multi-panel plots as single frame** — `pairs()`, `layout()`, `par(mfrow=...)` and any function that calls `plot.new()` internally no longer produce partial intermediate captures. The `plot.new` tracer now only sets a flag; actual capture happens once per expression, after the expression completes — identical to Positron's execution loop.
-- **Fixed: Additive draw functions update in-place** — `qqline()`, `lines()`, `points()`, `legend()`, `abline()` and similar functions that draw on the existing frame now update the last plot entry instead of creating a new one. Result: `qqnorm()` + `qqline()` = 1 plot, not 2.
-- **New: Julia 20-plot test suite** — Comprehensive test script covering scatter, line, histogram, bar, heatmap, contour, 3D surface, 3D scatter, subplots, and more using base Plots.jl (no StatsPlots required).
+- **Fixed: First-run single-plot capture** - Root cause identified and eliminated. `installed.packages()` was failing silently during `.Rprofile` startup (utils not yet attached), causing init.R to abort before installing the source patch. Replaced with `requireNamespace()` which is always available at startup.
+- **Fixed: Multi-panel plots as single frame** - `pairs()`, `layout()`, `par(mfrow=...)` and any function that calls `plot.new()` internally no longer produce partial intermediate captures. The `plot.new` tracer now only sets a flag; actual capture happens once per expression, after the expression completes - identical to Positron's execution loop.
+- **Fixed: Additive draw functions update in-place** - `qqline()`, `lines()`, `points()`, `legend()`, `abline()` and similar functions that draw on the existing frame now update the last plot entry instead of creating a new one. Result: `qqnorm()` + `qqline()` = 1 plot, not 2.
+- **New: Julia 20-plot test suite** - Comprehensive test script covering scatter, line, histogram, bar, heatmap, contour, 3D surface, 3D scatter, subplots, and more using base Plots.jl (no StatsPlots required).
 
 ### 0.45.0 - Universal Capture Engine & GIS Stability
 
