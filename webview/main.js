@@ -30,6 +30,98 @@ function persistMeta() {
     savedMetaMap = new Map(meta.map(m => [m.id, { note: m.note, isFavorite: m.isFavorite }]));
     vscode.postMessage({ command: 'persist_meta', meta });
 }
+
+// --- GALLERY ARCHIVE (survives R shutdown / VS Code restart) ---
+const ARCHIVE_MAX = 60;   // cap archived plots to bound disk usage
+let archiveTimer = null;
+
+function dataURLToBlob(dataURL) {
+    const [head, b64] = String(dataURL).split(',');
+    const mime = (head.match(/data:([^;]+)/) || [])[1] || 'image/png';
+    const bin = atob(b64 || '');
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+}
+
+async function blobUrlToDataURL(url) {
+    try {
+        const resp = await fetch(url);
+        const blob = await resp.blob();
+        return await new Promise((res) => {
+            const r = new FileReader();
+            r.onloadend = () => res(r.result);
+            r.onerror = () => res(null);
+            r.readAsDataURL(blob);
+        });
+    } catch (_) { return null; }
+}
+
+// Debounced snapshot of the current gallery (image bytes + metadata) to disk,
+// so plots remain browsable after the R server is gone. Only plots whose bytes
+// we already have are archived; the rest are archived once their binary loads.
+function persistArchive() {
+    if (archiveTimer) clearTimeout(archiveTimer);
+    archiveTimer = setTimeout(async () => {
+        archiveTimer = null;
+        try {
+            const recent = plots.slice(-ARCHIVE_MAX);
+            const out = [];
+            for (const p of recent) {
+                let data = null;
+                const url = plotUrls.get(p.id);
+                if (url) data = await blobUrlToDataURL(url);
+                else if (p.data && String(p.data).startsWith('data:')) data = p.data;
+                if (!data) continue;
+                out.push({
+                    id: p.id,
+                    data,
+                    format: p.format || 'png',
+                    timestamp: p.timestamp || '',
+                    note: p.note || '',
+                    isFavorite: !!p.isFavorite
+                });
+            }
+            vscode.postMessage({ command: 'persist_archive', plots: out });
+        } catch (e) {
+            log('persistArchive failed: ' + e);
+        }
+    }, 1500);
+}
+
+// Load archived plots that are not currently present (a live plot always wins).
+function applyRestoredArchive(archived) {
+    if (!archived || !archived.length) return;
+    let added = false;
+    for (const a of archived) {
+        if (!a || !a.id || !a.data) continue;
+        if (plots.some(p => String(p.id) === String(a.id))) continue;
+        try {
+            const url = URL.createObjectURL(dataURLToBlob(a.data));
+            plotUrls.set(a.id, url);
+            const meta = savedMetaMap.get(a.id);
+            plots.push({
+                id: a.id,
+                data: url,
+                format: a.format || 'png',
+                timestamp: a.timestamp || '',
+                note: (meta ? meta.note : a.note) || '',
+                isFavorite: meta ? meta.isFavorite : !!a.isFavorite,
+                port: 'archive'
+            });
+            added = true;
+        } catch (e) {
+            log('restore archive item failed: ' + e);
+        }
+    }
+    if (added) {
+        const idNum = id => Number(String(id).replace(/^[a-z]+-/i, '')) || 0;
+        plots.sort((x, y) => idNum(x.id) - idNum(y.id));
+        if (currentIndex < 0 && plots.length) currentIndex = plots.length - 1;
+        updatePlotList();
+        if (currentIndex >= 0) showPlot(currentIndex, false);
+    }
+}
 let thumbObserver; // For lazy loading
 let isSplitMode = false;
 let leftIndex = typeof state.leftIndex === 'number' ? state.leftIndex : -1;
@@ -232,6 +324,7 @@ window.addEventListener('message', event => {
         case 'export_plot': exportPlot(); break;
         case 'do_export': exportAsFormat(message.format, message); break;
         case 'restore_meta': applyRestoredMeta(message.meta); break;
+        case 'restore_archive': applyRestoredArchive(message.plots); break;
         case 'info': console.info(message.text); break;
     }
 });
@@ -591,15 +684,25 @@ function handleMessage(data, port) {
                 };
             });
             
-            // Multi-terminal stability: Replace ONLY plots from THIS port
+            // Multi-terminal stability: Replace ONLY plots from THIS port.
+            // Archived plots (port === 'archive') are kept so the gallery history
+            // survives an R restart; a live plot with the same id supersedes its archive.
             const otherPlots = plots.filter(p => p.port && p.port !== port);
             const taggedIncoming = incomingPlots.map(np => ({ ...np, port }));
             // IDs are "r-<timestamp>" or "jl-<timestamp>"; parseInt("r-...") = NaN
             // so strip the prefix before sorting to restore chronological order.
             const idNum = id => Number(String(id).replace(/^[a-z]+-/i, '')) || 0;
-            plots = [...otherPlots, ...taggedIncoming].sort((a,b) => idNum(a.id) - idNum(b.id));
-            
+            const byId = new Map();
+            for (const p of [...otherPlots, ...taggedIncoming]) {
+                const prev = byId.get(String(p.id));
+                if (!prev || (prev.port === 'archive' && p.port !== 'archive')) {
+                    byId.set(String(p.id), p);
+                }
+            }
+            plots = Array.from(byId.values()).sort((a,b) => idNum(a.id) - idNum(b.id));
+
             rehydratePlots();
+            persistArchive();
             break;
     }
 }
@@ -644,37 +747,60 @@ async function exportAsFormat(format, opts = {}) {
         }
     }
 
-    // Case 3: Raster (PNG) or Fallback
-    if (isSplitMode) {
-        getSplitCombinedBlob(plots[leftIndex], plots[rightIndex], (blob) => {
-            if (!blob) {
-                log('Failed to create split plot blob');
-                vscode.postMessage({ command: 'info', text: 'Export failed: Could not process images' });
-                return;
-            }
-            const reader = new FileReader();
-            reader.onloadend = () => {
+    // Case 3: Raster (PNG) / PDF (raster embedded) / Fallback
+    const deliverRaster = (blob) => {
+        if (!blob) {
+            log('Failed to create plot blob');
+            vscode.postMessage({ command: 'info', text: 'Export failed: Could not process image' });
+            return;
+        }
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            if (format === 'pdf') {
+                deliverPdf(reader.result);
+            } else {
                 vscode.postMessage({ command: 'save_data', data: reader.result, format: format });
-            };
-            reader.readAsDataURL(blob);
-        }, opts);
-    } else {
-        getCombinedPlotBlob(plot, (blob) => {
-            if (!blob) {
-                log('Failed to create plot blob');
-                vscode.postMessage({ command: 'info', text: 'Export failed: Could not process image' });
-                return;
             }
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                vscode.postMessage({
-                    command: 'save_data',
-                    data: reader.result,
-                    format: format
-                });
-            };
-            reader.readAsDataURL(blob);
-        }, opts);
+        };
+        reader.readAsDataURL(blob);
+    };
+
+    if (isSplitMode) {
+        getSplitCombinedBlob(plots[leftIndex], plots[rightIndex], deliverRaster, opts);
+    } else {
+        getCombinedPlotBlob(plot, deliverRaster, opts);
+    }
+}
+
+// Wrap a PNG data URL in a single-page PDF sized to the image, using the bundled
+// jsPDF. Keeps PDF export dependency-light and fully offline.
+function deliverPdf(pngDataUrl) {
+    try {
+        const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || (window.jsPDF);
+        if (!jsPDFCtor) {
+            vscode.postMessage({ command: 'info', text: 'PDF export unavailable: library not loaded' });
+            return;
+        }
+        const img = new Image();
+        img.onload = () => {
+            const w = img.naturalWidth || 800;
+            const h = img.naturalHeight || 600;
+            const doc = new jsPDFCtor({
+                orientation: w >= h ? 'landscape' : 'portrait',
+                unit: 'px',
+                format: [w, h]
+            });
+            doc.addImage(pngDataUrl, 'PNG', 0, 0, w, h);
+            const pdfDataUri = doc.output('datauristring');
+            vscode.postMessage({ command: 'save_data', data: pdfDataUri, format: 'pdf' });
+        };
+        img.onerror = () => {
+            vscode.postMessage({ command: 'info', text: 'PDF export failed: could not read image' });
+        };
+        img.src = pngDataUrl;
+    } catch (e) {
+        log('PDF export failed: ' + e);
+        vscode.postMessage({ command: 'info', text: 'PDF export failed' });
     }
 }
 
@@ -808,6 +934,7 @@ function addPlot(plotUrl, metadata = {}, port) {
 
     updatePlotList();
     showPlot(currentIndex, true);
+    persistArchive();
 }
 
 function updateCurrentPlot(plotId, plotUrl, port) {
@@ -991,8 +1118,10 @@ function deletePlot(index, event) {
 
     // 5. Update state and UI
     saveState();
+    persistMeta();
+    persistArchive();
     updatePlotList();
-    
+
     if (plots.length > 0) {
         showPlot(currentIndex, false);
     } else {
@@ -1339,6 +1468,10 @@ function nextPlot() { if (currentIndex < plots.length - 1) showPlot(currentIndex
 function clearAllPlots() {
      broadcastToBackends({ type: 'clear_all' });
      clearLocalPlots();
+     // Explicit user action: also wipe the durable gallery archive and metadata.
+     vscode.postMessage({ command: 'persist_archive', plots: [] });
+     vscode.postMessage({ command: 'persist_meta', meta: [] });
+     savedMetaMap = new Map();
 }
 
 function exportPlot() {
@@ -1536,6 +1669,7 @@ function toggleFavorite(index, event) {
     plots[index].isFavorite = !plots[index].isFavorite;
     vscode.setState({ ...vscode.getState(), plots: plots });
     persistMeta();
+    persistArchive();
     updatePlotList();
 }
 
@@ -1572,6 +1706,7 @@ function saveNote() {
     plots[currentNoteIndex].note = document.getElementById('noteTextarea').value.trim();
     vscode.setState({ ...vscode.getState(), plots: plots });
     persistMeta();
+    persistArchive();
     updatePlotList();
     closeNoteModal();
 }
@@ -2557,6 +2692,7 @@ window.addEventListener('keydown', (e) => {
 
 vscode.postMessage({ command: 'request_config' });
 vscode.postMessage({ command: 'request_meta' });
+vscode.postMessage({ command: 'request_archive' });
 setTimeout(() => {
     document.body.style.opacity = '1';
 }, 50);

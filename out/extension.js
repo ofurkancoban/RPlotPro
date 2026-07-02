@@ -7,12 +7,15 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 // Export presets: raster presets carry a scale (DPI multiplier) or fixed
-// dimensions; SVG stays vector. Sent to the webview as { format, scale, width, height }.
+// dimensions; SVG stays vector; PDF embeds the raster at the chosen scale/size.
+// Sent to the webview as { format, scale, width, height }.
 const EXPORT_PRESETS = [
     { label: 'PNG - Screen', description: '1x, current size', format: 'png', scale: 1 },
     { label: 'PNG - High DPI', description: '2x resolution', format: 'png', scale: 2 },
     { label: 'PNG - Publication', description: '3x (~300 dpi)', format: 'png', scale: 3 },
     { label: 'PNG - Slide 16:9', description: '1920 x 1080', format: 'png', width: 1920, height: 1080 },
+    { label: 'PDF - Publication', description: '3x (~300 dpi)', format: 'pdf', scale: 3 },
+    { label: 'PDF - Slide 16:9', description: '1920 x 1080', format: 'pdf', width: 1920, height: 1080 },
     { label: 'SVG - Vector', description: 'Scalable, editable', format: 'svg' }
 ];
 async function pickExportPreset() {
@@ -214,6 +217,13 @@ function activate(context) {
     // Used by .Rprofile hook to source init.R at R startup (zero timing gap)
     context.environmentVariableCollection.replace('RPLOT_PRO_INIT', normalizedInitPath);
     plotProvider.setSessionConfigPath(uniqueConfigDir);
+    // Gallery archive lives in global storage, keyed by the workspace-stable configId
+    // so it persists across sessions and R restarts.
+    try {
+        fs.mkdirSync(context.globalStorageUri.fsPath, { recursive: true });
+    }
+    catch (_) { /* best-effort */ }
+    plotProvider.setArchiveFile(path.join(context.globalStorageUri.fsPath, `archive-${configId}.json`));
     // .Rprofile integration — ask user once, silently skip if already done
     setupRprofileIntegration(context);
     // Remove-from-.Rprofile command (accessible via Command Palette)
@@ -346,6 +356,33 @@ function activate(context) {
 }
 function deactivate() { }
 class PlotViewProvider {
+    setArchiveFile(p) {
+        this.archiveFile = p;
+    }
+    readArchive() {
+        if (!this.archiveFile)
+            return [];
+        try {
+            if (!fs.existsSync(this.archiveFile))
+                return [];
+            const parsed = JSON.parse(fs.readFileSync(this.archiveFile, 'utf8'));
+            return Array.isArray(parsed) ? parsed : [];
+        }
+        catch (_) {
+            return [];
+        }
+    }
+    writeArchive(plots) {
+        if (!this.archiveFile)
+            return;
+        try {
+            fs.mkdirSync(path.dirname(this.archiveFile), { recursive: true });
+            fs.writeFileSync(this.archiveFile, JSON.stringify(Array.isArray(plots) ? plots : []), 'utf8');
+        }
+        catch (_) {
+            // Non-fatal: archiving is best-effort.
+        }
+    }
     constructor(_extensionUri, _memento) {
         this._extensionUri = _extensionUri;
         this._memento = _memento;
@@ -382,6 +419,12 @@ class PlotViewProvider {
                     break;
                 case 'request_meta':
                     this.postMessage({ command: 'restore_meta', meta: this._memento.get('rplot.meta', []) });
+                    break;
+                case 'persist_archive':
+                    this.writeArchive(message.plots || []);
+                    break;
+                case 'request_archive':
+                    this.postMessage({ command: 'restore_archive', plots: this.readArchive() });
                     break;
                 case 'save_data':
                     vscode.window.showSaveDialog({
@@ -448,11 +491,13 @@ class PlotViewProvider {
         const extensionUri = this._extensionUri;
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'main.js'));
         const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'style.css'));
+        const jspdfUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'vendor', 'jspdf.umd.min.js'));
         const htmlPath = vscode.Uri.joinPath(extensionUri, 'webview', 'index.html');
         let html = fs.readFileSync(htmlPath.fsPath, 'utf8');
         // Replace placeholders
         html = html.replace(/\${webview.cspSource}/g, webview.cspSource)
             .replace(/\${styleUri}/g, styleUri.toString())
+            .replace(/\${jspdfUri}/g, jspdfUri.toString())
             .replace(/\${scriptUri}/g, scriptUri.toString());
         return html;
     }
