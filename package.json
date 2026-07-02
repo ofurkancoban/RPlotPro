@@ -66,6 +66,35 @@
       {
         "command": "rPlotViewer.attach",
         "title": "R Plot Pro: Attach to Terminal"
+      },
+      {
+        "command": "rPlotViewer.toggleAnnotation",
+        "title": "R Plot Pro: Toggle Annotation Mode",
+        "icon": "$(edit)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "rPlotViewer.previousPlot",
+        "key": "alt+left",
+        "when": "focusedView == rPlotViewer.mainView"
+      },
+      {
+        "command": "rPlotViewer.nextPlot",
+        "key": "alt+right",
+        "when": "focusedView == rPlotViewer.mainView"
+      },
+      {
+        "command": "rPlotViewer.exportPlot",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e",
+        "when": "focusedView == rPlotViewer.mainView"
+      },
+      {
+        "command": "rPlotViewer.toggleAnnotation",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "focusedView == rPlotViewer.mainView"
       }
     ],
     "viewsContainers": {

@@ -139,8 +139,19 @@ let isSplitMode = false;
 let leftIndex = typeof state.leftIndex === 'number' ? state.leftIndex : -1;
 let rightIndex = typeof state.rightIndex === 'number' ? state.rightIndex : -1;
 let isDraggingDivider = false;
-let isDarkMode = false; // Always start in Light Mode by default
+// Dark (inverted) plot mode. By default it follows the VS Code color theme; a manual
+// toggle pins it for the session. VS Code tags the webview body with vscode-dark /
+// vscode-light / vscode-high-contrast.
+function detectVsCodeDark() {
+    const c = document.body.classList;
+    return c.contains('vscode-dark') || c.contains('vscode-high-contrast');
+}
+let darkModeUserSet = typeof state.darkMode === 'boolean';
+let isDarkMode = darkModeUserSet ? state.darkMode : detectVsCodeDark();
 let lastCanvasData = new Map(); // Store base64 canvas data per plot ID
+// Per-plot zoom level (plotId -> zoom class name e.g. 'fit','100'). Remembered so each
+// plot keeps its own zoom instead of a single global one.
+let plotZoom = state.plotZoom ? new Map(Object.entries(state.plotZoom)) : new Map();
 
 // Annotation State
 let isAnnotating = false;
@@ -304,6 +315,7 @@ window.addEventListener('message', event => {
         case 'export_plot': exportPlot(); break;
         case 'do_export': exportAsFormat(message.format, message); break;
         case 'highlight_source': highlightPlotsForSource(message.file, message.line); break;
+        case 'toggle_annotation': toggleAnnotationMode(); break;
         case 'restore_meta': applyRestoredMeta(message.meta); break;
         case 'restore_archive': applyRestoredArchive(message.plots); break;
         case 'info': console.info(message.text); break;
@@ -1086,8 +1098,9 @@ function createPlotItemHTML(plot, index) {
     const noteClass = plot.note ? 'has-note' : '';
     const favoriteTitle = plot.isFavorite ? 'Remove from favorites' : 'Add to favorites';
     const noteTitle = plot.note ? 'Edit note' : 'Add note';
-    
-    let html = '<div class="plot-item ' + isActive + ' ' + splitClass + '" id="plot-item-' + index + '" ';
+    const annoClass = lastCanvasData.has(String(plot.id)) ? 'has-annotation' : '';
+
+    let html = '<div class="plot-item ' + isActive + ' ' + splitClass + ' ' + annoClass + '" id="plot-item-' + index + '" ';
     html += 'onclick="showPlot(' + index + ')" ';
     html += 'draggable="true" ';
     html += 'ondragstart="handleDragStart(event, ' + index + ')" ';
@@ -1101,6 +1114,8 @@ function createPlotItemHTML(plot, index) {
 
     const src = plotUrls.get(plot.id) || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMSIgaGVpZ2h0PSIxIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjwvc3ZnPg=='; 
     html += '<img class="lazy-thumb" data-id="' + plot.id + '" src="' + src + '" loading="lazy" alt="Plot ' + (index + 1) + '" id="thumb-' + index + '"/>';
+    // Marker for plots carrying annotations (baked into every export).
+    html += '<div class="annotation-badge" title="Annotated (included in exports)">✎</div>';
     html += '<div class="thumbnail-footer">';
     html += '<div class="plot-meta">';
     html += '<div class="plot-index" style="font-weight:600">Plot ' + (index + 1) + '</div>';
@@ -1209,6 +1224,10 @@ function showPlot(index, shouldScroll = true) {
                     plotImage.style.display = 'block';
                     if (wrapper) {
                         wrapper.style.display = 'inline-block';
+                        // Apply this plot's remembered zoom (falls back to the global default).
+                        const z = plotZoom.get(String(pid)) || (vscode.getState() || {}).zoomLevel || 'fit';
+                        wrapper.classList.remove('zoom-fit', 'zoom-50', 'zoom-75', 'zoom-100', 'zoom-200');
+                        wrapper.classList.add('zoom-' + z);
                         updatePlotDimensions('mainMediaWrapper');
                     }
                     document.getElementById('emptyState').style.display = 'none';
@@ -1253,10 +1272,11 @@ function openInNewWindow() {
 
 function toggleDarkMode() {
     isDarkMode = !isDarkMode;
+    darkModeUserSet = true; // manual choice pins it, stops following the theme
     document.body.classList.toggle('dark-mode', isDarkMode);
-    
+
     updateDarkModeUI();
-    
+
     const currentState = vscode.getState() || {};
     vscode.setState({ ...currentState, darkMode: isDarkMode });
 }
@@ -1302,6 +1322,11 @@ function toggleZoom() {
     // Only save global state if not in split mode, or use it as a default
     if (!isSplitMode) {
         vscode.setState({ ...vscode.getState(), zoomLevel: newZoom });
+        // Remember this zoom for the specific plot too.
+        if (currentIndex >= 0 && plots[currentIndex]) {
+            plotZoom.set(String(plots[currentIndex].id), newZoom);
+            saveState();
+        }
     }
 
     // Refresh annotations for visible canvases
@@ -1918,6 +1943,7 @@ function saveState() {
         leftIndex,
         rightIndex,
         annotations: lastCanvasData.size > 0 ? Object.fromEntries(lastCanvasData) : undefined,
+        plotZoom: plotZoom.size > 0 ? Object.fromEntries(plotZoom) : undefined,
         palette: paletteState
     });
 }
@@ -2120,6 +2146,9 @@ function toggleAnnotationMode() {
     
     if (isAnnotating) {
         setupActiveCanvas();
+    } else {
+        // Refresh the gallery so annotation badges reflect the latest drawings.
+        updatePlotList();
     }
 }
 
@@ -2732,6 +2761,17 @@ if (isDarkMode) {
     document.body.classList.add('dark-mode');
 }
 updateDarkModeUI();
+
+// Follow VS Code theme changes until the user manually pins dark mode.
+new MutationObserver(() => {
+    if (darkModeUserSet) return;
+    const shouldDark = detectVsCodeDark();
+    if (shouldDark !== isDarkMode) {
+        isDarkMode = shouldDark;
+        document.body.classList.toggle('dark-mode', isDarkMode);
+        updateDarkModeUI();
+    }
+}).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 refreshLayout();
 setDrawColor(currentColor);
 initCustomColorPicker();
@@ -2747,7 +2787,24 @@ window.addEventListener('keydown', (e) => {
                 e.preventDefault();
                 redoAnnotation();
             }
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            toggleAnnotationMode(); // leave annotation mode
         }
+        return;
+    }
+
+    // Viewer shortcuts only when not typing in a field.
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    switch (e.key) {
+        case 'ArrowLeft':  e.preventDefault(); previousPlot(); break;
+        case 'ArrowRight': e.preventDefault(); nextPlot(); break;
+        case 'a': case 'A': e.preventDefault(); toggleAnnotationMode(); break;
+        case 'e': case 'E': e.preventDefault(); exportPlot(); break;
+        case 'd': case 'D': e.preventDefault(); toggleDarkMode(); break;
     }
 });
 

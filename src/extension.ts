@@ -246,6 +246,9 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('rPlotViewer.nextPlot', () => {
             plotProvider.postMessage({ command: 'next_plot' });
         }),
+        vscode.commands.registerCommand('rPlotViewer.toggleAnnotation', () => {
+            plotProvider.postMessage({ command: 'toggle_annotation' });
+        }),
         vscode.commands.registerCommand('rPlotViewer.openGallery', () => {
             const panel = vscode.window.createWebviewPanel(
                 'rPlotGallery',

@@ -276,6 +276,27 @@ button.icon-btn svg[fill="currentColor"] {
     border-top: 3px solid var(--accent);
 }
 
+/* Annotation marker: shown only on thumbnails whose plot carries annotations. */
+.annotation-badge {
+    display: none;
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 16px;
+    height: 16px;
+    line-height: 16px;
+    text-align: center;
+    font-size: 11px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--list-active-fg, #fff);
+    z-index: 2;
+    pointer-events: none;
+}
+.plot-item.has-annotation .annotation-badge {
+    display: block;
+}
+
 /* Reverse code -> plot link: thumbnails whose source covers the editor cursor line. */
 .plot-item.source-linked {
     outline: 2px solid var(--accent);
