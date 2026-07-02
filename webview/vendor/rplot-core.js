@@ -27,8 +27,10 @@ var RPlotCore = (() => {
     aspectRatio: () => aspectRatio,
     computeExportCanvas: () => computeExportCanvas,
     computePlotDimensions: () => computePlotDimensions,
+    computeSplitCanvas: () => computeSplitCanvas,
     idNum: () => idNum,
     mergePlotLists: () => mergePlotLists,
+    paletteScale: () => paletteScale,
     toCanvasCoords: () => toCanvasCoords
   });
 
@@ -156,6 +158,26 @@ var RPlotCore = (() => {
     const cw = natW * scale;
     const ch = natH * scale;
     return { cw, ch, dx: 0, dy: 0, dw: cw, dh: ch };
+  }
+  function paletteScale(containerW, containerH) {
+    if (containerW < 400 || containerH < 400) {
+      return Math.max(0.6, Math.min(containerW / 500, containerH / 500));
+    }
+    return 1;
+  }
+  function computeSplitCanvas(natWL, natHL, natWR, natHR, scale = 2) {
+    const wL = (natWL || 800) * scale;
+    const hL = (natHL || 600) * scale;
+    const wR = (natWR || 800) * scale;
+    const hR = (natHR || 600) * scale;
+    const canvasW = wL + wR;
+    const canvasH = Math.max(hL, hR);
+    return {
+      canvasW,
+      canvasH,
+      left: { x: 0, y: (canvasH - hL) / 2, w: wL, h: hL },
+      right: { x: wL, y: (canvasH - hR) / 2, w: wR, h: hR }
+    };
   }
 
   // webview/src/annotation.ts

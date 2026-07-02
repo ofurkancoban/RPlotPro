@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { aspectRatio, computePlotDimensions, computeExportCanvas } from './geometry';
+import { aspectRatio, computePlotDimensions, computeExportCanvas, paletteScale, computeSplitCanvas } from './geometry';
 
 suite('aspectRatio', () => {
     test('named aspects', () => {
@@ -81,5 +81,39 @@ suite('computeExportCanvas', () => {
         assert.strictEqual(c.dh, 750);
         assert.strictEqual(c.dx, 0);
         assert.strictEqual(c.dy, 125);
+    });
+});
+
+suite('paletteScale', () => {
+    test('full size in a large container', () => {
+        assert.strictEqual(paletteScale(800, 600), 1.0);
+    });
+    test('scales down in a small container, floored at 0.6', () => {
+        assert.strictEqual(paletteScale(300, 300), 0.6);          // min(0.6,0.6) -> 0.6
+        assert.strictEqual(paletteScale(350, 399), 350 / 500);    // 0.7, above the floor
+    });
+});
+
+suite('computeSplitCanvas', () => {
+    test('equal plots sit side by side, full height', () => {
+        const s = computeSplitCanvas(800, 600, 800, 600, 2);
+        assert.strictEqual(s.canvasW, 3200); // (800+800)*2
+        assert.strictEqual(s.canvasH, 1200); // 600*2
+        assert.deepStrictEqual(s.left, { x: 0, y: 0, w: 1600, h: 1200 });
+        assert.deepStrictEqual(s.right, { x: 1600, y: 0, w: 1600, h: 1200 });
+    });
+
+    test('shorter plot is vertically centred against the taller one', () => {
+        const s = computeSplitCanvas(800, 300, 800, 600, 1);
+        assert.strictEqual(s.canvasH, 600);
+        assert.strictEqual(s.left.h, 300);
+        assert.strictEqual(s.left.y, 150); // (600-300)/2
+        assert.strictEqual(s.right.y, 0);
+    });
+
+    test('falls back to 800x600 for missing natural sizes', () => {
+        const s = computeSplitCanvas(0, 0, 0, 0, 1);
+        assert.strictEqual(s.canvasW, 1600);
+        assert.strictEqual(s.canvasH, 600);
     });
 });

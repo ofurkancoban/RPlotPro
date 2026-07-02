@@ -90,3 +90,48 @@ export function computeExportCanvas(natW: number, natH: number, opts: ExportOpts
     const ch = natH * scale;
     return { cw, ch, dx: 0, dy: 0, dw: cw, dh: ch };
 }
+
+// Auto-scale factor for the annotation palette so it stays usable in a small viewer.
+export function paletteScale(containerW: number, containerH: number): number {
+    if (containerW < 400 || containerH < 400) {
+        return Math.max(0.6, Math.min(containerW / 500, containerH / 500));
+    }
+    return 1.0;
+}
+
+export interface Box {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+}
+
+export interface SplitCanvas {
+    canvasW: number;
+    canvasH: number;
+    left: Box;
+    right: Box;
+}
+
+// Side-by-side split-export layout: two plots drawn at `scale`, vertically centred
+// on a white canvas as wide as both and as tall as the taller one.
+export function computeSplitCanvas(
+    natWL: number,
+    natHL: number,
+    natWR: number,
+    natHR: number,
+    scale = 2
+): SplitCanvas {
+    const wL = (natWL || 800) * scale;
+    const hL = (natHL || 600) * scale;
+    const wR = (natWR || 800) * scale;
+    const hR = (natHR || 600) * scale;
+    const canvasW = wL + wR;
+    const canvasH = Math.max(hL, hR);
+    return {
+        canvasW,
+        canvasH,
+        left: { x: 0, y: (canvasH - hL) / 2, w: wL, h: hL },
+        right: { x: wL, y: (canvasH - hR) / 2, w: wR, h: hR }
+    };
+}

@@ -2257,15 +2257,7 @@ function updatePaletteScaling() {
     const container = document.getElementById('plotContainer');
     if (!palette || !container || !isAnnotating) return;
 
-    const cw = container.clientWidth;
-    const ch = container.clientHeight;
-    
-    // Auto-scale palette if container is too small
-    let scale = 1.0;
-    if (cw < 400 || ch < 400) {
-        scale = Math.max(0.6, Math.min(cw / 500, ch / 500));
-    }
-    
+    const scale = window.RPlotCore.paletteScale(container.clientWidth, container.clientHeight);
     palette.style.transform = `scale(${scale})`;
 }
 
@@ -2577,28 +2569,28 @@ async function getSplitCombinedBlob(plotL, plotR, callback, opts = {}) {
         // Split view honours the preset scale (DPI multiplier); fixed-dimension
         // presets fall back to their scale or the 2x High-DPI default.
         const scale = opts.scale || 2;
-        const wL = (imgL.naturalWidth || 800) * scale;
-        const hL = (imgL.naturalHeight || 600) * scale;
-        const wR = (imgR.naturalWidth || 800) * scale;
-        const hR = (imgR.naturalHeight || 600) * scale;
+        // Layout (sizes + vertically-centred draw rects) lives in the typed core.
+        const layout = window.RPlotCore.computeSplitCanvas(
+            imgL.naturalWidth, imgL.naturalHeight, imgR.naturalWidth, imgR.naturalHeight, scale);
+        const { left: L, right: R } = layout;
 
         const canvas = document.createElement('canvas');
-        canvas.width = wL + wR;
-        canvas.height = Math.max(hL, hR);
+        canvas.width = layout.canvasW;
+        canvas.height = layout.canvasH;
 
         const ctx = canvas.getContext('2d');
         ctx.fillStyle = "white";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         // Draw Left
-        ctx.drawImage(imgL, 0, (canvas.height - hL) / 2, wL, hL);
+        ctx.drawImage(imgL, L.x, L.y, L.w, L.h);
         const annoL = lastCanvasData.get(String(plotL.id));
-        if (annoL) await drawAnno(ctx, annoL, 0, (canvas.height - hL) / 2, wL, hL);
+        if (annoL) await drawAnno(ctx, annoL, L.x, L.y, L.w, L.h);
 
         // Draw Right
-        ctx.drawImage(imgR, wL, (canvas.height - hR) / 2, wR, hR);
+        ctx.drawImage(imgR, R.x, R.y, R.w, R.h);
         const annoR = lastCanvasData.get(String(plotR.id));
-        if (annoR) await drawAnno(ctx, annoR, wL, (canvas.height - hR) / 2, wR, hR);
+        if (annoR) await drawAnno(ctx, annoR, R.x, R.y, R.w, R.h);
 
         canvas.toBlob(callback, 'image/png', 0.95);
     } catch (e) {
