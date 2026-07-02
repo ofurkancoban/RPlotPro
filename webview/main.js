@@ -79,7 +79,11 @@ function persistArchive() {
                     format: p.format || 'png',
                     timestamp: p.timestamp || '',
                     note: p.note || '',
-                    isFavorite: !!p.isFavorite
+                    isFavorite: !!p.isFavorite,
+                    code: p.code || '',
+                    srcFile: p.srcFile || '',
+                    srcLine1: p.srcLine1,
+                    srcLine2: p.srcLine2
                 });
             }
             vscode.postMessage({ command: 'persist_archive', plots: out });
@@ -107,6 +111,10 @@ function applyRestoredArchive(archived) {
                 timestamp: a.timestamp || '',
                 note: (meta ? meta.note : a.note) || '',
                 isFavorite: meta ? meta.isFavorite : !!a.isFavorite,
+                code: a.code || '',
+                srcFile: a.srcFile || '',
+                srcLine1: a.srcLine1,
+                srcLine2: a.srcLine2,
                 port: 'archive'
             });
             added = true;
@@ -897,6 +905,11 @@ function addPlot(plotUrl, metadata = {}, port) {
         timestamp: metadata.timestamp || new Date().toLocaleTimeString(),
         note: metadata.note || '',
         isFavorite: metadata.isFavorite || false,
+        // Source provenance captured by the R server (for the code-actions menu).
+        code: metadata.code || '',
+        srcFile: metadata.srcFile || '',
+        srcLine1: metadata.srcLine1,
+        srcLine2: metadata.srcLine2,
         port: Number(port)
     };
     plots.push(plot);
@@ -1132,6 +1145,9 @@ function createPlotItemHTML(plot, index) {
     html += '<div class="plot-time">' + plot.timestamp + '</div>';
     html += '</div>';
     html += '<div class="thumbnail-actions">';
+    html += '<div class="code-btn" onclick="toggleCodeMenu(' + index + ', event)" title="Code actions">';
+    html += '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-code"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M7 8l-4 4l4 4" /><path d="M17 8l4 4l-4 4" /><path d="M14 4l-4 16" /></svg>';
+    html += '</div>';
     html += '<div class="favorite-btn ' + favoriteClass + '" onclick="toggleFavorite(' + index + ', event)" title="' + favoriteTitle + '">';
     html += '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 17.75l-6.172 3.245l1.179 -6.873l-5 -4.867l6.9 -1l3.086 -6.253l3.086 6.253l6.9 1l-5 4.867l1.179 6.873z" /></svg>';
     html += '</div>';
@@ -1632,6 +1648,102 @@ function handleDragStart(event, index) {
 function handleDragEnd(event) {
     event.target.classList.remove('dragging');
 }
+
+// --- CODE ACTIONS (per-plot dropdown, left of the favorite icon) ---
+let codeMenuEl = null;
+let codeMenuIndex = -1;
+
+function buildCodeMenu() {
+    if (codeMenuEl) return codeMenuEl;
+    codeMenuEl = document.createElement('div');
+    codeMenuEl.className = 'code-menu';
+    codeMenuEl.style.display = 'none';
+    codeMenuEl.innerHTML =
+        '<div class="code-menu-item" data-act="copy">Copy Code</div>' +
+        '<div class="code-menu-item" data-act="reveal">Reveal Code in Console</div>' +
+        '<div class="code-menu-item" data-act="run">Run Code Again</div>' +
+        '<div class="code-menu-item" data-act="open">Open Source File</div>';
+    codeMenuEl.addEventListener('click', (e) => {
+        const item = e.target.closest('.code-menu-item');
+        if (!item || item.classList.contains('disabled')) { e.stopPropagation(); return; }
+        e.stopPropagation();
+        const act = item.getAttribute('data-act');
+        const idx = codeMenuIndex;
+        hideCodeMenu();
+        runCodeAction(act, idx);
+    });
+    document.body.appendChild(codeMenuEl);
+    return codeMenuEl;
+}
+
+function hideCodeMenu() {
+    if (codeMenuEl) codeMenuEl.style.display = 'none';
+    codeMenuIndex = -1;
+}
+
+function toggleCodeMenu(index, event) {
+    if (event) event.stopPropagation();
+    const menu = buildCodeMenu();
+    if (menu.style.display === 'block' && codeMenuIndex === index) { hideCodeMenu(); return; }
+    codeMenuIndex = index;
+
+    // Enable/disable items based on captured metadata.
+    const plot = plots[index] || {};
+    const hasCode = !!(plot.code && String(plot.code).trim());
+    const hasFile = !!(plot.srcFile && String(plot.srcFile).trim());
+    menu.querySelector('[data-act="copy"]').classList.toggle('disabled', !hasCode);
+    menu.querySelector('[data-act="reveal"]').classList.toggle('disabled', !hasCode);
+    menu.querySelector('[data-act="run"]').classList.toggle('disabled', !hasCode);
+    menu.querySelector('[data-act="open"]').classList.toggle('disabled', !hasFile);
+
+    // Position near the clicked button, clamped to the viewport.
+    menu.style.display = 'block';
+    const rect = (event && event.currentTarget)
+        ? event.currentTarget.getBoundingClientRect()
+        : { left: 8, right: 8, top: 8, bottom: 8 };
+    const mw = menu.offsetWidth || 190;
+    const mh = menu.offsetHeight || 130;
+    let left = rect.left;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    if (left < 8) left = 8;
+    let top = rect.bottom + 4;
+    if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+}
+
+function runCodeAction(act, index) {
+    const plot = plots[index];
+    if (!plot) return;
+    const code = plot.code || '';
+    const noCode = () => vscode.postMessage({ command: 'info', text: 'No source code captured for this plot' });
+    switch (act) {
+        case 'copy':
+            if (!code.trim()) return noCode();
+            navigator.clipboard.writeText(code).then(
+                () => vscode.postMessage({ command: 'info', text: 'Code copied to clipboard' }),
+                () => vscode.postMessage({ command: 'info', text: 'Copy failed: clipboard access required' })
+            );
+            break;
+        case 'reveal':
+            if (!code.trim()) return noCode();
+            vscode.postMessage({ command: 'reveal_code', code });
+            break;
+        case 'run':
+            if (!code.trim()) return noCode();
+            vscode.postMessage({ command: 'run_code', code });
+            break;
+        case 'open':
+            if (!plot.srcFile) { vscode.postMessage({ command: 'info', text: 'No source file captured for this plot' }); return; }
+            vscode.postMessage({ command: 'open_source', file: plot.srcFile, line1: plot.srcLine1, line2: plot.srcLine2 });
+            break;
+    }
+}
+
+// Dismiss the menu on any outside click, scroll or resize.
+window.addEventListener('click', () => hideCodeMenu());
+window.addEventListener('resize', () => hideCodeMenu());
+document.addEventListener('scroll', () => hideCodeMenu(), true);
 
 function toggleFavorite(index, event) {
     if (event) event.stopPropagation();

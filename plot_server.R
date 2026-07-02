@@ -70,6 +70,14 @@ local(
         hook_registered <- FALSE # plot.new hook registered once per server lifetime
         hook_active <- FALSE     # enables/disables the hook without removing it
         plot_new_called <- FALSE # TRUE when plot.new() fired during current expression
+
+        # Source provenance of the top-level expression that produced the current
+        # plot, captured from the task callback and attached to plot metadata so the
+        # webview can offer Copy / Reveal / Run-again / Open-source-file actions.
+        last_expr_code <- ""
+        last_expr_file <- ""
+        last_expr_line1 <- NA_integer_
+        last_expr_line2 <- NA_integer_
         
         # Debug logging. Use a cross-platform temp path (tempdir()) instead of a
         # hardcoded "/tmp", which does not exist on Windows, and swallow warnings
@@ -215,6 +223,16 @@ local(
             for (client in clients) send_binary_to_client(client, "new_plot", raw_data, metadata)
         }
 
+        # Build plot metadata, attaching captured source provenance when available.
+        make_meta <- function(id) {
+            m <- list(id = id, timestamp = format(Sys.time(), "%H:%M:%S"), format = "svg")
+            if (nzchar(last_expr_code)) m$code <- last_expr_code
+            if (nzchar(last_expr_file)) m$srcFile <- last_expr_file
+            if (!is.na(last_expr_line1)) m$srcLine1 <- last_expr_line1
+            if (!is.na(last_expr_line2)) m$srcLine2 <- last_expr_line2
+            m
+        }
+
         process_internal_capture <- function(current_plot, temp_file_path = NULL,
                                              bypass_throttle = FALSE, update_last = FALSE) {
             if (is.null(current_plot)) return()
@@ -242,7 +260,7 @@ local(
                     # lines, points) — replace the last entry instead of adding a new one.
                     if (update_last && length(plots) > 0) {
                         id <- plots[[length(plots)]]$id
-                        plot_metadata <- list(id = id, timestamp = format(Sys.time(), "%H:%M:%S"), format = "svg")
+                        plot_metadata <- make_meta(id)
                         plots[[length(plots)]] <<- plot_metadata
                         recordings[[id]] <<- current_plot
                         raw_plots[[id]] <<- raw_data
@@ -250,7 +268,7 @@ local(
                             send_binary_to_client(client, "update_plot", raw_data, plot_metadata)
                     } else {
                         id <- sprintf("r-%.0f", as.numeric(Sys.time()) * 1000)
-                        plot_metadata <- list(id = id, timestamp = format(Sys.time(), "%H:%M:%S"), format = "svg")
+                        plot_metadata <- make_meta(id)
 
                         if (length(plots) >= 200) {
                             old_id <- plots[[1]]$id
@@ -316,6 +334,27 @@ local(
         }
         
         check_for_new_plot <- function(expr, value, ok, visible) {
+            # Capture the code + source location of the expression that just ran, so
+            # it can be attached to any plot this expression produces.
+            tryCatch({
+                last_expr_code <<- paste(deparse(expr), collapse = "\n")
+                last_expr_file <<- ""
+                last_expr_line1 <<- NA_integer_
+                last_expr_line2 <<- NA_integer_
+                sref <- attr(expr, "srcref")
+                if (!is.null(sref)) {
+                    srcfile <- attr(sref, "srcfile")
+                    if (!is.null(srcfile) && !is.null(srcfile$filename) && nzchar(srcfile$filename)) {
+                        last_expr_file <<- normalizePath(srcfile$filename, mustWork = FALSE)
+                    }
+                    loc <- as.integer(sref)
+                    if (length(loc) >= 3) {
+                        last_expr_line1 <<- loc[1]
+                        last_expr_line2 <<- loc[3]
+                    }
+                }
+            }, error = function(e) {})
+
             new_frame <- isTRUE(plot_new_called)
             plot_new_called <<- FALSE
             safe_capture(bypass_throttle = TRUE,

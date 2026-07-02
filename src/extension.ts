@@ -41,6 +41,51 @@ const EXPORT_PRESETS: ExportPreset[] = [
     { label: 'SVG - Vector',      description: 'Scalable, editable',   format: 'svg' }
 ];
 
+// Pick the terminal most likely running R (falls back to the active/first terminal).
+function findRTerminal(): vscode.Terminal | undefined {
+    const isR = (name: string) => /\b(r|r\.exe|rterm|r interactive|radian)\b/i.test(name);
+    return vscode.window.terminals.find(t => isR(t.name))
+        ?? vscode.window.activeTerminal
+        ?? vscode.window.terminals[0];
+}
+
+async function openSourceAt(file: string, line1?: number, line2?: number) {
+    try {
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+        const editor = await vscode.window.showTextDocument(doc);
+        if (line1 && line1 > 0) {
+            const startLine = line1 - 1;
+            const endLine = (line2 && line2 >= line1) ? line2 - 1 : startLine;
+            const start = new vscode.Position(startLine, 0);
+            const end = new vscode.Position(endLine, doc.lineAt(endLine).text.length);
+            editor.selection = new vscode.Selection(start, end);
+            editor.revealRange(new vscode.Range(start, end), vscode.TextEditorRevealType.InCenter);
+        }
+    } catch (e: any) {
+        vscode.window.showErrorMessage('R Plot Pro: Could not open source file — ' + (e?.message ?? e));
+    }
+}
+
+// Code-actions from the per-plot dropdown. Returns true if it handled the message.
+function handleCodeMessage(message: any): boolean {
+    switch (message.command) {
+        case 'reveal_code':
+        case 'run_code': {
+            const term = findRTerminal();
+            if (!term) { vscode.window.showWarningMessage('R Plot Pro: No terminal to send code to'); return true; }
+            term.show(true);
+            // reveal = type without executing (newline=false); run = execute (newline=true)
+            term.sendText(String(message.code ?? ''), message.command === 'run_code');
+            return true;
+        }
+        case 'open_source':
+            if (message.file) openSourceAt(String(message.file), message.line1, message.line2);
+            else vscode.window.showInformationMessage('R Plot Pro: No source file captured for this plot');
+            return true;
+    }
+    return false;
+}
+
 async function pickExportPreset():
     Promise<{ format: string; scale?: number; width?: number; height?: number } | undefined> {
     const items = EXPORT_PRESETS.map(p => ({ label: p.label, description: p.description, preset: p }));
@@ -203,6 +248,9 @@ export function activate(context: vscode.ExtensionContext) {
 
             // Forward messages from panel to handle export/config same way
             panel.webview.onDidReceiveMessage(message => {
+                if (handleCodeMessage(message)) {
+                    return;
+                }
                 if (message.command === 'request_config') {
                     const backends = plotProvider.getBackends();
                     if (backends.length > 0) {
@@ -593,6 +641,11 @@ class PlotViewProvider implements vscode.WebviewViewProvider {
                 case 'info':
                     logLine(`[info] ${message.text}`);
                     vscode.window.showInformationMessage(`R Plot Pro: ${message.text}`);
+                    break;
+                case 'reveal_code':
+                case 'run_code':
+                case 'open_source':
+                    handleCodeMessage(message);
                     break;
                 case 'save_data':
                     vscode.window.showSaveDialog({
