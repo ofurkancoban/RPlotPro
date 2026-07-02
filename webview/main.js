@@ -503,18 +503,10 @@ function handleBinaryMessage(buffer, port) {
         const payload = new Uint8Array(buffer, 4 + metaLen);
         log(`Payload length: ${payload.byteLength} bytes`);
 
-        // Sniff format if unknown or to verify
-        let mimeType = metadata.format === 'svg' ? 'image/svg+xml' : 'image/png';
-        if (payload.byteLength > 10) {
-            const sniff = new TextDecoder().decode(payload.slice(0, 50));
-            if (sniff.includes('<svg') || sniff.includes('<?xml')) {
-                log('Sniffed format: SVG');
-                mimeType = 'image/svg+xml';
-            } else {
-                log('Sniffed format: Likely PNG');
-                mimeType = 'image/png';
-            }
-        }
+        // Sniff format if unknown or to verify (decision logic lives in the core).
+        const sniff = payload.byteLength > 10 ? new TextDecoder().decode(payload.slice(0, 50)) : '';
+        const mimeType = window.RPlotCore.sniffImageMime(sniff, metadata.format, payload.byteLength);
+        log(`Sniffed format: ${mimeType}`);
 
         const blob = new Blob([payload], { type: mimeType });
         const url = URL.createObjectURL(blob);

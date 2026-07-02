@@ -10,3 +10,5 @@ export type { Aspect, PlotDimensions, ExportOpts, ExportCanvas, Box, SplitCanvas
 export { toCanvasCoords, arrowGeometry } from './annotation';
 export type { RectLike, Point, ArrowGeometry } from './annotation';
 export { AnnotationHistory } from './history';
+export { sniffImageMime } from './format';
+export type { ImageMime } from './format';

@@ -31,6 +31,7 @@ var RPlotCore = (() => {
     idNum: () => idNum,
     mergePlotLists: () => mergePlotLists,
     paletteScale: () => paletteScale,
+    sniffImageMime: () => sniffImageMime,
     toCanvasCoords: () => toCanvasCoords
   });
 
@@ -252,5 +253,14 @@ var RPlotCore = (() => {
       else this.map.delete(String(pid));
     }
   };
+
+  // webview/src/format.ts
+  function sniffImageMime(headText, metadataFormat, byteLength = 0) {
+    let mime = metadataFormat === "svg" ? "image/svg+xml" : "image/png";
+    if (byteLength > 10) {
+      mime = headText.includes("<svg") || headText.includes("<?xml") ? "image/svg+xml" : "image/png";
+    }
+    return mime;
+  }
   return __toCommonJS(src_exports);
 })();
