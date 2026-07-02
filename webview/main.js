@@ -199,53 +199,18 @@ function updatePlotDimensions(wrapperId) {
     
     if (cw === 0 || ch === 0) return; // Not visible yet
 
-    let targetW, targetH;
-    
-    // 1. Determine Aspect Ratio numeric value
-    let ratio = 0; // 0 means auto/fill behavior (no strict ratio)
-    
-    if (aspect === 'square') ratio = 1;
-    else if (aspect === 'landscape') ratio = 4/3;
-    else if (aspect === 'portrait') ratio = 3/4;
-    
-    // 2. Calculate "Base Fit" dimensions
-    // This represents the size of the plot if Zoom was "Fit"
-    let fitW, fitH;
-
-    if (ratio === 0) {
-        // Auto/Fill: Fit simply fills the container
-        fitW = cw;
-        fitH = ch;
-    } else {
-        // Aspect constrained: Find largest box of ratio that fits in cw/ch
-        if (cw / ch > ratio) {
-            // Container is wider than aspect -> constrain by height
-            fitH = ch;
-            fitW = ch * ratio;
-        } else {
-            // Container is taller than aspect -> constrain by width
-            fitW = cw;
-            fitH = cw / ratio;
-        }
-    }
-
-    // 3. Apply Zoom Factor to the Base Fit dimensions
-    if (zoom === 'fit') {
-        targetW = fitW;
-        targetH = fitH;
-    } else {
-        const factor = parseInt(zoom) / 100;
-        targetW = fitW * factor;
-        targetH = fitH * factor;
-    }
+    // Sizing math lives in the typed, unit-tested core.
+    const dims = window.RPlotCore.computePlotDimensions(zoom, aspect, cw, ch);
+    const targetW = dims.width;
+    const targetH = dims.height;
 
     wrapper.style.width = Math.floor(targetW) + 'px';
     wrapper.style.height = Math.floor(targetH) + 'px';
-    
+
     // 4. Centering Strategy (v0.0.49 Smart Centering)
-    const fitsW = targetW <= cw;
-    const fitsH = targetH <= ch;
-    
+    const fitsW = dims.fitsW;
+    const fitsH = dims.fitsH;
+
     // Set margins based on whether it fits
     wrapper.style.marginLeft = fitsW ? 'auto' : '0';
     wrapper.style.marginRight = fitsW ? 'auto' : '0';
@@ -2594,20 +2559,8 @@ function getCombinedPlotBlob(plot, callback, opts = {}) {
         const natW = img.naturalWidth || 800;
         const natH = img.naturalHeight || 600;
 
-        // Export presets: fixed dimensions (e.g. 1920x1080 slide) fit the plot inside
-        // while keeping aspect ratio and letterboxing on white; otherwise a scale
-        // factor acts as a DPI multiplier (1x screen, 2x high-DPI, 3x publication).
-        let cw, ch, dx = 0, dy = 0, dw, dh;
-        if (opts.width && opts.height) {
-            cw = opts.width; ch = opts.height;
-            const r = Math.min(cw / natW, ch / natH);
-            dw = natW * r; dh = natH * r;
-            dx = (cw - dw) / 2; dy = (ch - dh) / 2;
-        } else {
-            const scale = opts.scale || 2; // default High DPI
-            cw = natW * scale; ch = natH * scale;
-            dw = cw; dh = ch;
-        }
+        // Export sizing (scale/DPI or fixed-dimension letterbox) lives in the core.
+        const { cw, ch, dx, dy, dw, dh } = window.RPlotCore.computeExportCanvas(natW, natH, opts);
         canvas.width = cw;
         canvas.height = ch;
 
