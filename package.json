@@ -56,6 +56,10 @@
         "title": "R Plot Pro: Remove .Rprofile Hook"
       },
       {
+        "command": "rPlotViewer.removeFromJuliaStartup",
+        "title": "R Plot Pro: Remove Julia startup.jl Hook"
+      },
+      {
         "command": "rPlotViewer.reportIssue",
         "title": "R Plot Pro: Report Issue"
       },

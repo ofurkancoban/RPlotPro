@@ -117,75 +117,98 @@ async function resolveBackends(backends: Backend[]): Promise<ResolvedBackend[]> 
     }));
 }
 
-const RPROFILE_MARKER_START = '# [R Plot Pro]';
-const RPROFILE_MARKER_END   = '# [R Plot Pro END]';
-const RPROFILE_SNIPPET = `${RPROFILE_MARKER_START}
-local({i<-Sys.getenv("RPLOT_PRO_INIT");if(nzchar(i)&&file.exists(i))source(i)})
-${RPROFILE_MARKER_END}`;
+// --- Startup-hook integration (R .Rprofile / Julia startup.jl) ---
+// The most reliable attach path: the language runtime sources our init script at
+// startup via an env var, so there is no name-guessing or blind terminal injection.
+// Both files use '#' comments, so the marker + add/remove logic is shared.
+const HOOK_START = '# [R Plot Pro]';
+const HOOK_END = '# [R Plot Pro END]';
+const R_HOOK_BODY = 'local({i<-Sys.getenv("RPLOT_PRO_INIT");if(nzchar(i)&&file.exists(i))source(i)})';
+const JL_HOOK_BODY = 'let i = get(ENV, "VSC_JL_PLOT_INIT", ""); if !isempty(i) && isfile(i); include(i); end; end';
 
-function getRprofilePath(): string {
-    return path.join(os.homedir(), '.Rprofile');
+// --- pure, unit-tested content helpers ---
+export function contentHasHook(content: string): boolean {
+    return content.includes(HOOK_START);
 }
 
-function isRprofileIntegrated(): boolean {
-    const rp = getRprofilePath();
-    if (!fs.existsSync(rp)) return false;
-    return fs.readFileSync(rp, 'utf8').includes(RPROFILE_MARKER_START);
+export function addHookToContent(content: string, body: string): string {
+    if (content.includes(HOOK_START)) return content; // already present, idempotent
+    const snippet = `${HOOK_START}\n${body}\n${HOOK_END}`;
+    const sep = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
+    return content + sep + '\n' + snippet + '\n';
 }
 
-function addToRprofile(): void {
-    const rp = getRprofilePath();
-    const existing = fs.existsSync(rp) ? fs.readFileSync(rp, 'utf8') : '';
-    // Avoid duplicate if somehow already there
-    if (existing.includes(RPROFILE_MARKER_START)) return;
-    const separator = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
-    fs.writeFileSync(rp, existing + separator + '\n' + RPROFILE_SNIPPET + '\n', 'utf8');
+export function removeHookFromContent(content: string): { content: string; removed: boolean } {
+    if (!content.includes(HOOK_START)) return { content, removed: false };
+    // Markers contain regex metacharacters ("[", "]") — escape them before use.
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`\\n?${esc(HOOK_START)}[\\s\\S]*?${esc(HOOK_END)}\\n?`, 'g');
+    const cleaned = content.replace(re, '\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+    return { content: cleaned + '\n', removed: true };
 }
 
-function removeFromRprofile(): boolean {
-    const rp = getRprofilePath();
-    if (!fs.existsSync(rp)) return false;
-    const content = fs.readFileSync(rp, 'utf8');
-    if (!content.includes(RPROFILE_MARKER_START)) return false;
-    // Remove the block including surrounding blank lines
-    const cleaned = content
-        .replace(new RegExp(`\\n?${RPROFILE_MARKER_START}[\\s\\S]*?${RPROFILE_MARKER_END}\\n?`, 'g'), '\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trimEnd();
-    fs.writeFileSync(rp, cleaned + '\n', 'utf8');
-    return true;
+// Identify an interactive R/Julia launch from a shell command line (basename-based,
+// so 'rm'/'rsync'/'ruby'/'Rscript' batch are NOT treated as an interactive session).
+export function detectLaunchLanguage(commandLine: string): 'r' | 'julia' | null {
+    if (!commandLine) return null;
+    const firstRaw = commandLine.trim().split(/\s+/)[0] || '';
+    const first = firstRaw.replace(/^["']|["']$/g, '');
+    const base = (first.replace(/\\/g, '/').split('/').pop() || '').replace(/\.exe$/i, '');
+    if (base === 'R' || base === 'Rterm' || base.toLowerCase() === 'radian') return 'r';
+    if (base.toLowerCase() === 'julia' || base.toLowerCase() === 'julialauncher') return 'julia';
+    return null;
 }
 
-async function setupRprofileIntegration(context: vscode.ExtensionContext): Promise<void> {
-    // Already integrated — nothing to do
-    if (isRprofileIntegrated()) return;
+// --- file-level wrappers ---
+interface StartupHook {
+    file: string;
+    body: string;
+    label: string;
+    pretty: string;
+    declineKey: string;
+}
+function rHook(): StartupHook {
+    return { file: path.join(os.homedir(), '.Rprofile'), body: R_HOOK_BODY,
+             label: 'R', pretty: '~/.Rprofile', declineKey: 'rprofile.declined' };
+}
+function juliaHook(): StartupHook {
+    return { file: path.join(os.homedir(), '.julia', 'config', 'startup.jl'), body: JL_HOOK_BODY,
+             label: 'Julia', pretty: '~/.julia/config/startup.jl', declineKey: 'julia.startup.declined' };
+}
 
-    // User previously said "Don't ask"
-    if (context.globalState.get<boolean>('rprofile.declined')) return;
+function hookInstalled(h: StartupHook): boolean {
+    return fs.existsSync(h.file) && contentHasHook(fs.readFileSync(h.file, 'utf8'));
+}
+function installHook(h: StartupHook): void {
+    const existing = fs.existsSync(h.file) ? fs.readFileSync(h.file, 'utf8') : '';
+    fs.mkdirSync(path.dirname(h.file), { recursive: true });
+    fs.writeFileSync(h.file, addHookToContent(existing, h.body), 'utf8');
+}
+function uninstallHook(h: StartupHook): boolean {
+    if (!fs.existsSync(h.file)) return false;
+    const res = removeHookFromContent(fs.readFileSync(h.file, 'utf8'));
+    if (res.removed) fs.writeFileSync(h.file, res.content, 'utf8');
+    return res.removed;
+}
 
+async function setupHookIntegration(context: vscode.ExtensionContext, h: StartupHook): Promise<void> {
+    if (hookInstalled(h)) return;
+    if (context.globalState.get<boolean>(h.declineKey)) return;
     const answer = await vscode.window.showInformationMessage(
-        'R Plot Pro: Add a one-line hook to ~/.Rprofile so plots are captured instantly when R starts — no timing gaps, works like Positron.',
+        `R Plot Pro: Add a startup hook to ${h.pretty} so ${h.label} plots are captured instantly when ${h.label} starts — no timing gaps.`,
         { modal: false },
-        'Add to .Rprofile',
+        'Add hook',
         "Don't ask again"
     );
-
-    if (answer === 'Add to .Rprofile') {
+    if (answer === 'Add hook') {
         try {
-            addToRprofile();
-            vscode.window.showInformationMessage(
-                'R Plot Pro: ~/.Rprofile updated. Restart R terminals to activate instant capture.',
-                'Open .Rprofile'
-            ).then(btn => {
-                if (btn === 'Open .Rprofile') {
-                    vscode.window.showTextDocument(vscode.Uri.file(getRprofilePath()));
-                }
-            });
+            installHook(h);
+            vscode.window.showInformationMessage(`R Plot Pro: ${h.pretty} updated. Restart ${h.label} to activate instant capture.`);
         } catch (e: any) {
-            vscode.window.showErrorMessage('R Plot Pro: Could not write ~/.Rprofile — ' + e.message);
+            vscode.window.showErrorMessage(`R Plot Pro: Could not write ${h.pretty} — ${e.message}`);
         }
     } else if (answer === "Don't ask again") {
-        context.globalState.update('rprofile.declined', true);
+        context.globalState.update(h.declineKey, true);
     }
     // undefined = dismissed → ask again next time
 }
@@ -341,17 +364,26 @@ export function activate(context: vscode.ExtensionContext) {
     } catch (_) { /* best-effort */ }
     plotProvider.setArchiveFile(path.join(context.globalStorageUri.fsPath, `archive-${configId}.json`));
 
-    // .Rprofile integration — ask user once, silently skip if already done
-    setupRprofileIntegration(context);
+    // .Rprofile integration — ask user once, silently skip if already done.
+    // (Julia's startup.jl hook is offered lazily, the first time Julia is used.)
+    setupHookIntegration(context, rHook());
 
-    // Remove-from-.Rprofile command (accessible via Command Palette)
+    // Remove-hook commands (accessible via Command Palette)
     context.subscriptions.push(
         vscode.commands.registerCommand('rPlotViewer.removeFromRprofile', () => {
-            if (removeFromRprofile()) {
+            if (uninstallHook(rHook())) {
                 vscode.window.showInformationMessage('R Plot Pro: Removed hook from ~/.Rprofile.');
                 context.globalState.update('rprofile.declined', false); // re-enable future prompts
             } else {
                 vscode.window.showInformationMessage('R Plot Pro: No hook found in ~/.Rprofile.');
+            }
+        }),
+        vscode.commands.registerCommand('rPlotViewer.removeFromJuliaStartup', () => {
+            if (uninstallHook(juliaHook())) {
+                vscode.window.showInformationMessage('R Plot Pro: Removed hook from ~/.julia/config/startup.jl.');
+                context.globalState.update('julia.startup.declined', false);
+            } else {
+                vscode.window.showInformationMessage('R Plot Pro: No hook found in ~/.julia/config/startup.jl.');
             }
         })
     );
@@ -410,9 +442,11 @@ export function activate(context: vscode.ExtensionContext) {
 
     if (autoAttach) {
         const injectedPids = new Set<number>();
-        const tryInject = async (terminal: vscode.Terminal, force = false) => {
+        // forceLang lets a reliable signal (shell-integration command detection)
+        // drive injection regardless of the terminal name.
+        const tryInject = async (terminal: vscode.Terminal, force = false, forceLang?: 'r' | 'julia') => {
             if (!terminal) return;
-            
+
             let pid: number | undefined;
             try {
                 pid = await terminal.processId;
@@ -422,14 +456,13 @@ export function activate(context: vscode.ExtensionContext) {
             if (!pid) return;
 
             if (!force && injectedPids.has(pid)) return;
-            
+
             const name = terminal.name;
-            const shellPath = (terminal.creationOptions as any)?.shellPath || '';
-            
-            // Neural Precision: Match standalone keywords using word boundaries \b (Mac support)
-            const isRTerminal = /\b(r|r\.exe|rterm|r interactive)\b/i.test(name);
-            const isJuliaTerminal = /\b(julia|julialauncher)\b/i.test(name);
-    
+
+            // Detect language by an explicit signal first, else by terminal name.
+            const isRTerminal = forceLang === 'r' || (!forceLang && /\b(r|r\.exe|rterm|r interactive)\b/i.test(name));
+            const isJuliaTerminal = forceLang === 'julia' || (!forceLang && /\b(julia|julialauncher)\b/i.test(name));
+
             const sanitizePath = (p: string) => p.replace(/\\/g, '/');
 
             // Atomic R Injection
@@ -454,6 +487,9 @@ export function activate(context: vscode.ExtensionContext) {
             if (isJuliaTerminal && !injectedPids.has(pid)) {
                 injectedPids.add(pid);
                 logLine(`[Sentinel] Precise Attachment (Julia) | PID: ${pid}`);
+                // Offer the Julia startup hook the first time Julia is actually used
+                // (so R-only users never see a Julia prompt).
+                setupHookIntegration(context, juliaHook());
 
                 setTimeout(() => {
                     const bootDir = (os.platform() !== 'win32' && fs.existsSync('/tmp')) ? '/tmp' : os.tmpdir();
@@ -510,6 +546,26 @@ export function activate(context: vscode.ExtensionContext) {
         if (vscode.window.onDidChangeTerminalState) {
             context.subscriptions.push(vscode.window.onDidChangeTerminalState(term => {
                 if (term) { tryInject(term); kickSentinel(); }
+            }));
+        }
+
+        // Most reliable detection: VS Code shell integration reports the actual
+        // command executed at the shell prompt. When it is an interactive R/Julia
+        // launch, we know the language for sure (not by terminal name) and the REPL
+        // is starting on a clean prompt, so injection cannot corrupt a typed line.
+        // Feature-detected: only present on VS Code with the shell-execution API.
+        const onExec = (vscode.window as any).onDidStartTerminalShellExecution;
+        if (typeof onExec === 'function') {
+            context.subscriptions.push(onExec((e: any) => {
+                try {
+                    const cmd = e?.execution?.commandLine?.value ?? '';
+                    const lang = detectLaunchLanguage(cmd);
+                    if (lang) {
+                        logLine(`[ShellIntegration] Detected ${lang} launch: ${cmd}`);
+                        // Give the REPL a moment to reach its prompt before injecting.
+                        setTimeout(() => tryInject(e.terminal, true, lang), lang === 'julia' ? 2500 : 1200);
+                    }
+                } catch (_) { /* best effort */ }
             }));
         }
 

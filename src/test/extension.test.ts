@@ -11,6 +11,7 @@ const CONTRIBUTED_COMMANDS = [
     'rPlotViewer.previousPlot',
     'rPlotViewer.nextPlot',
     'rPlotViewer.removeFromRprofile',
+    'rPlotViewer.removeFromJuliaStartup',
     'rPlotViewer.reportIssue',
     'rPlotViewer.attach'
 ];
