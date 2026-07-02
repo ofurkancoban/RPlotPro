@@ -1145,9 +1145,6 @@ function createPlotItemHTML(plot, index) {
     html += '<div class="plot-time">' + plot.timestamp + '</div>';
     html += '</div>';
     html += '<div class="thumbnail-actions">';
-    html += '<div class="code-btn" onclick="toggleCodeMenu(' + index + ', event)" title="Code actions">';
-    html += '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-code"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M7 8l-4 4l4 4" /><path d="M17 8l4 4l-4 4" /><path d="M14 4l-4 16" /></svg>';
-    html += '</div>';
     html += '<div class="favorite-btn ' + favoriteClass + '" onclick="toggleFavorite(' + index + ', event)" title="' + favoriteTitle + '">';
     html += '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 17.75l-6.172 3.245l1.179 -6.873l-5 -4.867l6.9 -1l3.086 -6.253l3.086 6.253l6.9 1l-5 4.867l1.179 6.873z" /></svg>';
     html += '</div>';
@@ -1431,6 +1428,8 @@ function updateControls() {
     
     document.getElementById('exportBtn').disabled = !hasPlots;
     document.getElementById('copyBtn').disabled = !hasPlots;
+    const codeBtn = document.getElementById('codeBtn');
+    if (codeBtn) codeBtn.disabled = !hasPlots || isSplitMode;
     document.getElementById('newWindowBtn').disabled = !hasPlots;
     document.getElementById('clearBtn').disabled = !hasPlots;
     document.getElementById('zoomBtn').disabled = !hasPlots;
@@ -1710,6 +1709,13 @@ function toggleCodeMenu(index, event) {
     if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
     menu.style.left = left + 'px';
     menu.style.top = top + 'px';
+}
+
+// Toolbar entry point: acts on the currently selected plot.
+function toggleCodeMenuToolbar(event) {
+    if (event) event.stopPropagation();
+    if (currentIndex < 0 || currentIndex >= plots.length) return;
+    toggleCodeMenu(currentIndex, event);
 }
 
 function runCodeAction(act, index) {
