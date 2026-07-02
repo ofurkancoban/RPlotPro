@@ -21,6 +21,7 @@ var RPlotCore = (() => {
   // webview/src/index.ts
   var src_exports = {};
   __export(src_exports, {
+    AnnotationHistory: () => AnnotationHistory,
     ReconnectManager: () => ReconnectManager,
     arrowGeometry: () => arrowGeometry,
     aspectRatio: () => aspectRatio,
@@ -179,5 +180,55 @@ var RPlotCore = (() => {
       rightY: toY - headLength * Math.sin(angle + headAngle)
     };
   }
+
+  // webview/src/history.ts
+  var AnnotationHistory = class {
+    constructor(limit = 30) {
+      this.limit = limit;
+      this.map = /* @__PURE__ */ new Map();
+    }
+    get(pid) {
+      const key = String(pid);
+      let s = this.map.get(key);
+      if (!s) {
+        s = { undo: [], redo: [] };
+        this.map.set(key, s);
+      }
+      return s;
+    }
+    canUndo(pid) {
+      return this.get(pid).undo.length > 0;
+    }
+    canRedo(pid) {
+      return this.get(pid).redo.length > 0;
+    }
+    // Record a new committed state: push the previous snapshot onto the undo stack
+    // (bounded by `limit`) and clear the redo stack (a new action forks history).
+    commit(pid, previousState) {
+      const s = this.get(pid);
+      s.undo.push(previousState);
+      if (s.undo.length > this.limit) s.undo.shift();
+      s.redo = [];
+    }
+    // Undo: caller passes the current snapshot (pushed to redo). Returns the snapshot
+    // to render, or null if there is nothing to undo.
+    undo(pid, currentState) {
+      const s = this.get(pid);
+      if (s.undo.length === 0) return null;
+      s.redo.push(currentState);
+      return s.undo.pop() ?? null;
+    }
+    // Redo: mirror of undo.
+    redo(pid, currentState) {
+      const s = this.get(pid);
+      if (s.redo.length === 0) return null;
+      s.undo.push(currentState);
+      return s.redo.pop() ?? null;
+    }
+    clear(pid) {
+      if (pid === void 0) this.map.clear();
+      else this.map.delete(String(pid));
+    }
+  };
   return __toCommonJS(src_exports);
 })();

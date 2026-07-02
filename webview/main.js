@@ -147,7 +147,8 @@ let activeCanvas = null;
 let activeCtx = null;
 let activePane = 'left';
 let paletteState = state.palette || { x: 40, y: 40, isHorizontal: true };
-let annotationHistory = new Map(); // Map<pid, { undo: string[], redo: string[] }>
+// Per-plot annotation undo/redo, managed by the typed, unit-tested core.
+const annotationHistory = new window.RPlotCore.AnnotationHistory(30);
 
 // Rehydrate annotations if available
 if (state.annotations) {
@@ -2203,13 +2204,6 @@ function initPaletteDrag() {
 }
 
 // History Management
-function getHistory(pid) {
-    if (!annotationHistory.has(String(pid))) {
-        annotationHistory.set(String(pid), { undo: [], redo: [] });
-    }
-    return annotationHistory.get(String(pid));
-}
-
 function renderState(dataUrl) {
     if (!activeCtx || !activeCanvas) return;
     activeCtx.clearRect(0, 0, activeCanvas.width, activeCanvas.height);
@@ -2229,17 +2223,12 @@ function undoAnnotation() {
         plots[currentIndex]?.id;
     if (!pid) return;
 
-    const history = getHistory(pid);
-    if (history.undo.length === 0) return;
+    if (!annotationHistory.canUndo(pid)) return;
 
-    // Current state to redo
     const currentState = activeCanvas.toDataURL();
-    history.redo.push(currentState);
-    
-    // Pop from undo and render
-    const prevState = history.undo.pop();
+    const prevState = annotationHistory.undo(pid, currentState);
     renderState(prevState);
-    
+
     // Update current storage
     lastCanvasData.set(String(pid), prevState);
     saveState();
@@ -2252,17 +2241,12 @@ function redoAnnotation() {
         plots[currentIndex]?.id;
     if (!pid) return;
 
-    const history = getHistory(pid);
-    if (history.redo.length === 0) return;
+    if (!annotationHistory.canRedo(pid)) return;
 
-    // Current state back to undo
     const currentState = activeCanvas.toDataURL();
-    history.undo.push(currentState);
-    
-    // Pop from redo and render
-    const nextState = history.redo.pop();
+    const nextState = annotationHistory.redo(pid, currentState);
     renderState(nextState);
-    
+
     // Update current storage
     lastCanvasData.set(String(pid), nextState);
     saveState();
@@ -2466,14 +2450,9 @@ function saveAnnotationToHistory() {
         plots[currentIndex]?.id;
     
     if (pid) {
-        const history = getHistory(pid);
-        // Save PREVIOUS state to undo stack before updating
+        // Save PREVIOUS state to the undo stack (bounded), clearing redo.
         const prevState = lastCanvasData.get(String(pid)) || '';
-        history.undo.push(prevState);
-        // Limit history size
-        if (history.undo.length > 30) history.undo.shift();
-        // New action clears redo stack
-        history.redo = [];
+        annotationHistory.commit(pid, prevState);
 
         lastCanvasData.set(String(pid), activeCanvas.toDataURL());
         saveState(); // PERSIST TO VSCODE STATE
@@ -2488,11 +2467,9 @@ function clearAnnotations() {
         plots[currentIndex]?.id;
     
     if (pid) {
-        const history = getHistory(pid);
         const prevState = lastCanvasData.get(String(pid)) || '';
-        history.undo.push(prevState);
-        history.redo = [];
-        
+        annotationHistory.commit(pid, prevState);
+
         activeCtx.clearRect(0, 0, activeCanvas.width, activeCanvas.height);
         lastCanvasData.delete(String(pid));
         saveState();

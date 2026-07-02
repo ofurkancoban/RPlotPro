@@ -9,3 +9,4 @@ export { aspectRatio, computePlotDimensions, computeExportCanvas } from './geome
 export type { Aspect, PlotDimensions, ExportOpts, ExportCanvas } from './geometry';
 export { toCanvasCoords, arrowGeometry } from './annotation';
 export type { RectLike, Point, ArrowGeometry } from './annotation';
+export { AnnotationHistory } from './history';
