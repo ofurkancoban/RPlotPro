@@ -6,6 +6,23 @@ const vscode = require("vscode");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+// Export presets: raster presets carry a scale (DPI multiplier) or fixed
+// dimensions; SVG stays vector. Sent to the webview as { format, scale, width, height }.
+const EXPORT_PRESETS = [
+    { label: 'PNG - Screen', description: '1x, current size', format: 'png', scale: 1 },
+    { label: 'PNG - High DPI', description: '2x resolution', format: 'png', scale: 2 },
+    { label: 'PNG - Publication', description: '3x (~300 dpi)', format: 'png', scale: 3 },
+    { label: 'PNG - Slide 16:9', description: '1920 x 1080', format: 'png', width: 1920, height: 1080 },
+    { label: 'SVG - Vector', description: 'Scalable, editable', format: 'svg' }
+];
+async function pickExportPreset() {
+    const items = EXPORT_PRESETS.map(p => ({ label: p.label, description: p.description, preset: p }));
+    const chosen = await vscode.window.showQuickPick(items, { placeHolder: 'Select export format / preset' });
+    if (!chosen)
+        return undefined;
+    const p = chosen.preset;
+    return { format: p.format, scale: p.scale, width: p.width, height: p.height };
+}
 // Resolve each backend's loopback port to a URL the webview can actually dial.
 // The webview always runs in the local UI process, but with Remote-SSH, WSL,
 // Dev Containers or Codespaces the R server (and its port) live on the remote
@@ -94,7 +111,7 @@ function activate(context) {
     // Create diagnostic output channel
     const outputChannel = vscode.window.createOutputChannel("R Plot Pro");
     outputChannel.appendLine("R Plot Pro: Extension activated.");
-    const plotProvider = new PlotViewProvider(context.extensionUri);
+    const plotProvider = new PlotViewProvider(context.extensionUri, context.workspaceState);
     context.subscriptions.push(vscode.window.registerWebviewViewProvider('rPlotViewer.mainView', plotProvider, {
         webviewOptions: {
             retainContextWhenHidden: true
@@ -135,9 +152,9 @@ function activate(context) {
                 vscode.commands.executeCommand('rPlotViewer.openGallery');
             }
             else if (message.command === 'request_export') {
-                vscode.window.showQuickPick(['PNG', 'SVG'], { placeHolder: 'Select format to save' }).then(format => {
-                    if (format) {
-                        panel.webview.postMessage({ command: 'do_export', format: format.toLowerCase() });
+                pickExportPreset().then(opts => {
+                    if (opts) {
+                        panel.webview.postMessage({ command: 'do_export', ...opts });
                     }
                 });
             }
@@ -329,8 +346,9 @@ function activate(context) {
 }
 function deactivate() { }
 class PlotViewProvider {
-    constructor(_extensionUri) {
+    constructor(_extensionUri, _memento) {
         this._extensionUri = _extensionUri;
+        this._memento = _memento;
     }
     setSessionConfigPath(path) {
         this.sessionConfigPath = path;
@@ -351,11 +369,19 @@ class PlotViewProvider {
                     vscode.commands.executeCommand('rPlotViewer.openGallery');
                     break;
                 case 'request_export':
-                    vscode.window.showQuickPick(['PNG', 'SVG'], { placeHolder: 'Select format to save' }).then(format => {
-                        if (format) {
-                            this.postMessage({ command: 'do_export', format: format.toLowerCase() });
+                    pickExportPreset().then(opts => {
+                        if (opts) {
+                            this.postMessage({ command: 'do_export', ...opts });
                         }
                     });
+                    break;
+                case 'persist_meta':
+                    // Persist per-plot favorites/notes to workspace storage so they
+                    // survive VS Code restarts even if the webview state is dropped.
+                    this._memento.update('rplot.meta', message.meta || []);
+                    break;
+                case 'request_meta':
+                    this.postMessage({ command: 'restore_meta', meta: this._memento.get('rplot.meta', []) });
                     break;
                 case 'save_data':
                     vscode.window.showSaveDialog({

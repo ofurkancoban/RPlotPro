@@ -9,6 +9,27 @@ let resizeTimeout;
 let showOnlyFavorites = false;
 let currentNoteIndex = -1;
 let plotUrls = new Map(); // Store Object URLs by plot ID
+// Per-plot favorites/notes restored from workspace storage (id -> {note, isFavorite}).
+// Applied when the server's plot_list arrives so metadata survives restarts.
+let savedMetaMap = new Map();
+
+// Rebuild the metadata map from what the extension restored, then apply it to any
+// plots already loaded so favorites/notes reappear without waiting for a new plot_list.
+function applyRestoredMeta(meta) {
+    savedMetaMap = new Map((meta || []).map(m => [m.id, { note: m.note || '', isFavorite: !!m.isFavorite }]));
+    plots.forEach(p => {
+        const m = savedMetaMap.get(p.id);
+        if (m) { p.note = m.note; p.isFavorite = m.isFavorite; }
+    });
+    updatePlotList();
+}
+
+// Send compact per-plot metadata to the extension for durable workspace storage.
+function persistMeta() {
+    const meta = plots.map(p => ({ id: p.id, note: p.note || '', isFavorite: !!p.isFavorite }));
+    savedMetaMap = new Map(meta.map(m => [m.id, { note: m.note, isFavorite: m.isFavorite }]));
+    vscode.postMessage({ command: 'persist_meta', meta });
+}
 let thumbObserver; // For lazy loading
 let isSplitMode = false;
 let leftIndex = typeof state.leftIndex === 'number' ? state.leftIndex : -1;
@@ -209,7 +230,8 @@ window.addEventListener('message', event => {
         case 'previous_plot': previousPlot(); break;
         case 'clear_plots': clearAllPlots(); break;
         case 'export_plot': exportPlot(); break;
-        case 'do_export': exportAsFormat(message.format); break;
+        case 'do_export': exportAsFormat(message.format, message); break;
+        case 'restore_meta': applyRestoredMeta(message.meta); break;
         case 'info': console.info(message.text); break;
     }
 });
@@ -559,7 +581,8 @@ function handleMessage(data, port) {
             
             // Merge: use server data but restore client metadata if ID matches
             const incomingPlots = serverPlots.map(serverPlot => {
-                const savedMetadata = savedMetadataMap.get(serverPlot.id);
+                // Prefer durable workspace metadata; fall back to webview state.
+                const savedMetadata = savedMetaMap.get(serverPlot.id) || savedMetadataMap.get(serverPlot.id);
                 return {
                     ...serverPlot,
                     data: plotUrls.get(serverPlot.id) || '', // Restore URL if we have it
@@ -581,7 +604,7 @@ function handleMessage(data, port) {
     }
 }
 
-async function exportAsFormat(format) {
+async function exportAsFormat(format, opts = {}) {
     if (currentIndex < 0) return;
     const plot = plots[currentIndex];
     const hasAnnotation = lastCanvasData.has(String(plot.id));
@@ -634,7 +657,7 @@ async function exportAsFormat(format) {
                 vscode.postMessage({ command: 'save_data', data: reader.result, format: format });
             };
             reader.readAsDataURL(blob);
-        });
+        }, opts);
     } else {
         getCombinedPlotBlob(plot, (blob) => {
             if (!blob) {
@@ -642,17 +665,16 @@ async function exportAsFormat(format) {
                 vscode.postMessage({ command: 'info', text: 'Export failed: Could not process image' });
                 return;
             }
-            
             const reader = new FileReader();
             reader.onloadend = () => {
-                vscode.postMessage({ 
-                    command: 'save_data', 
-                    data: reader.result, 
-                    format: format 
+                vscode.postMessage({
+                    command: 'save_data',
+                    data: reader.result,
+                    format: format
                 });
             };
             reader.readAsDataURL(blob);
-        });
+        }, opts);
     }
 }
 
@@ -1513,6 +1535,7 @@ function toggleFavorite(index, event) {
     if (index < 0 || index >= plots.length) return;
     plots[index].isFavorite = !plots[index].isFavorite;
     vscode.setState({ ...vscode.getState(), plots: plots });
+    persistMeta();
     updatePlotList();
 }
 
@@ -1548,6 +1571,7 @@ function saveNote() {
     if (currentNoteIndex < 0 || currentNoteIndex >= plots.length) return;
     plots[currentNoteIndex].note = document.getElementById('noteTextarea').value.trim();
     vscode.setState({ ...vscode.getState(), plots: plots });
+    persistMeta();
     updatePlotList();
     closeNoteModal();
 }
@@ -2339,28 +2363,43 @@ window.addEventListener('resize', () => {
     }
 });
 
-function getCombinedPlotBlob(plot, callback) {
+function getCombinedPlotBlob(plot, callback, opts = {}) {
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
         const canvas = document.createElement('canvas');
-        // Composite always as PNG for simplicity and annotation support
-        const scale = 2; // High DPI
-        canvas.width = (img.naturalWidth || 800) * scale;
-        canvas.height = (img.naturalHeight || 600) * scale;
-        
+        const natW = img.naturalWidth || 800;
+        const natH = img.naturalHeight || 600;
+
+        // Export presets: fixed dimensions (e.g. 1920x1080 slide) fit the plot inside
+        // while keeping aspect ratio and letterboxing on white; otherwise a scale
+        // factor acts as a DPI multiplier (1x screen, 2x high-DPI, 3x publication).
+        let cw, ch, dx = 0, dy = 0, dw, dh;
+        if (opts.width && opts.height) {
+            cw = opts.width; ch = opts.height;
+            const r = Math.min(cw / natW, ch / natH);
+            dw = natW * r; dh = natH * r;
+            dx = (cw - dw) / 2; dy = (ch - dh) / 2;
+        } else {
+            const scale = opts.scale || 2; // default High DPI
+            cw = natW * scale; ch = natH * scale;
+            dw = cw; dh = ch;
+        }
+        canvas.width = cw;
+        canvas.height = ch;
+
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = "white"; 
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        
-        // Overlay annotation
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, cw, ch);
+
+        ctx.drawImage(img, dx, dy, dw, dh);
+
+        // Overlay annotation, aligned with the plot placement above.
         const annotationData = lastCanvasData.get(String(plot.id));
         if (annotationData) {
             const annoImg = new Image();
             annoImg.onload = () => {
-                ctx.drawImage(annoImg, 0, 0, canvas.width, canvas.height);
+                ctx.drawImage(annoImg, dx, dy, dw, dh);
                 canvas.toBlob(callback, 'image/png', 0.95);
             };
             annoImg.onerror = () => {
@@ -2379,7 +2418,7 @@ function getCombinedPlotBlob(plot, callback) {
     img.src = plot.data;
 }
 
-async function getSplitCombinedBlob(plotL, plotR, callback) {
+async function getSplitCombinedBlob(plotL, plotR, callback, opts = {}) {
     const loadImg = (url) => new Promise((res, rej) => {
         const img = new Image();
         img.crossOrigin = "anonymous";
@@ -2390,7 +2429,9 @@ async function getSplitCombinedBlob(plotL, plotR, callback) {
 
     try {
         const [imgL, imgR] = await Promise.all([loadImg(plotL.data), loadImg(plotR.data)]);
-        const scale = 2; // High DPI
+        // Split view honours the preset scale (DPI multiplier); fixed-dimension
+        // presets fall back to their scale or the 2x High-DPI default.
+        const scale = opts.scale || 2;
         const wL = (imgL.naturalWidth || 800) * scale;
         const hL = (imgL.naturalHeight || 600) * scale;
         const wR = (imgR.naturalWidth || 800) * scale;
@@ -2515,6 +2556,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 vscode.postMessage({ command: 'request_config' });
+vscode.postMessage({ command: 'request_meta' });
 setTimeout(() => {
     document.body.style.opacity = '1';
 }, 50);
