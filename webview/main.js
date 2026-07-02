@@ -9,6 +9,127 @@ let resizeTimeout;
 let showOnlyFavorites = false;
 let currentNoteIndex = -1;
 let plotUrls = new Map(); // Store Object URLs by plot ID
+// Per-plot favorites/notes restored from workspace storage (id -> {note, isFavorite}).
+// Applied when the server's plot_list arrives so metadata survives restarts.
+let savedMetaMap = new Map();
+
+// Rebuild the metadata map from what the extension restored, then apply it to any
+// plots already loaded so favorites/notes reappear without waiting for a new plot_list.
+function applyRestoredMeta(meta) {
+    savedMetaMap = new Map((meta || []).map(m => [m.id, { note: m.note || '', isFavorite: !!m.isFavorite }]));
+    plots.forEach(p => {
+        const m = savedMetaMap.get(p.id);
+        if (m) { p.note = m.note; p.isFavorite = m.isFavorite; }
+    });
+    updatePlotList();
+}
+
+// Send compact per-plot metadata to the extension for durable workspace storage.
+function persistMeta() {
+    const meta = plots.map(p => ({ id: p.id, note: p.note || '', isFavorite: !!p.isFavorite }));
+    savedMetaMap = new Map(meta.map(m => [m.id, { note: m.note, isFavorite: m.isFavorite }]));
+    vscode.postMessage({ command: 'persist_meta', meta });
+}
+
+// --- GALLERY ARCHIVE (survives R shutdown / VS Code restart) ---
+const ARCHIVE_MAX = 60;   // cap archived plots to bound disk usage
+let archiveTimer = null;
+
+function dataURLToBlob(dataURL) {
+    const [head, b64] = String(dataURL).split(',');
+    const mime = (head.match(/data:([^;]+)/) || [])[1] || 'image/png';
+    const bin = atob(b64 || '');
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+}
+
+async function blobUrlToDataURL(url) {
+    try {
+        const resp = await fetch(url);
+        const blob = await resp.blob();
+        return await new Promise((res) => {
+            const r = new FileReader();
+            r.onloadend = () => res(r.result);
+            r.onerror = () => res(null);
+            r.readAsDataURL(blob);
+        });
+    } catch (_) { return null; }
+}
+
+// Debounced snapshot of the current gallery (image bytes + metadata) to disk,
+// so plots remain browsable after the R server is gone. Only plots whose bytes
+// we already have are archived; the rest are archived once their binary loads.
+function persistArchive() {
+    if (archiveTimer) clearTimeout(archiveTimer);
+    archiveTimer = setTimeout(async () => {
+        archiveTimer = null;
+        try {
+            const recent = plots.slice(-ARCHIVE_MAX);
+            const out = [];
+            for (const p of recent) {
+                let data = null;
+                const url = plotUrls.get(p.id);
+                if (url) data = await blobUrlToDataURL(url);
+                else if (p.data && String(p.data).startsWith('data:')) data = p.data;
+                if (!data) continue;
+                out.push({
+                    id: p.id,
+                    data,
+                    format: p.format || 'png',
+                    timestamp: p.timestamp || '',
+                    note: p.note || '',
+                    isFavorite: !!p.isFavorite,
+                    code: p.code || '',
+                    srcFile: p.srcFile || '',
+                    srcLine1: p.srcLine1,
+                    srcLine2: p.srcLine2
+                });
+            }
+            vscode.postMessage({ command: 'persist_archive', plots: out });
+        } catch (e) {
+            log('persistArchive failed: ' + e);
+        }
+    }, 1500);
+}
+
+// Load archived plots that are not currently present (a live plot always wins).
+function applyRestoredArchive(archived) {
+    if (!archived || !archived.length) return;
+    let added = false;
+    for (const a of archived) {
+        if (!a || !a.id || !a.data) continue;
+        if (plots.some(p => String(p.id) === String(a.id))) continue;
+        try {
+            const url = URL.createObjectURL(dataURLToBlob(a.data));
+            plotUrls.set(a.id, url);
+            const meta = savedMetaMap.get(a.id);
+            plots.push({
+                id: a.id,
+                data: url,
+                format: a.format || 'png',
+                timestamp: a.timestamp || '',
+                note: (meta ? meta.note : a.note) || '',
+                isFavorite: meta ? meta.isFavorite : !!a.isFavorite,
+                code: a.code || '',
+                srcFile: a.srcFile || '',
+                srcLine1: a.srcLine1,
+                srcLine2: a.srcLine2,
+                port: 'archive'
+            });
+            added = true;
+        } catch (e) {
+            log('restore archive item failed: ' + e);
+        }
+    }
+    if (added) {
+        const idNum = id => Number(String(id).replace(/^[a-z]+-/i, '')) || 0;
+        plots.sort((x, y) => idNum(x.id) - idNum(y.id));
+        if (currentIndex < 0 && plots.length) currentIndex = plots.length - 1;
+        updatePlotList();
+        if (currentIndex >= 0) showPlot(currentIndex, false);
+    }
+}
 let thumbObserver; // For lazy loading
 let isSplitMode = false;
 let leftIndex = typeof state.leftIndex === 'number' ? state.leftIndex : -1;
@@ -35,9 +156,11 @@ if (state.annotations) {
     }
 }
 
-function log(msg) { 
-    console.log('[R Plot]', msg); 
+function log(msg) {
+    console.log('[R Plot]', msg);
     logToUI(msg);
+    // Mirror debug lines to the extension's Output channel for diagnostics.
+    try { vscode.postMessage({ command: 'log', text: String(msg) }); } catch (_) {}
 }
 
 // --- SCALING & DIMENSIONS (New JS-driven approach) ---
@@ -209,7 +332,9 @@ window.addEventListener('message', event => {
         case 'previous_plot': previousPlot(); break;
         case 'clear_plots': clearAllPlots(); break;
         case 'export_plot': exportPlot(); break;
-        case 'do_export': exportAsFormat(message.format); break;
+        case 'do_export': exportAsFormat(message.format, message); break;
+        case 'restore_meta': applyRestoredMeta(message.meta); break;
+        case 'restore_archive': applyRestoredArchive(message.plots); break;
         case 'info': console.info(message.text); break;
     }
 });
@@ -227,40 +352,21 @@ function debounce(func, wait) {
 const activeSockets = new Map(); // port -> WebSocket
 const portLanguages = new Map(); // port -> language
 const desiredPorts = new Map();      // port -> language: ports we want to stay connected to
-const reconnectTimers = new Map();   // port -> timeout id (pending reconnect)
-const reconnectAttempts = new Map(); // port -> consecutive failed attempts
-const MAX_RECONNECT = 8;             // give up after this many tries (server truly gone)
+const portUrls = new Map();          // port -> ws URL resolved by the extension (Remote-SSH/WSL/Codespaces forwarding)
 
-// Cancel any pending reconnect for a port and reset its attempt counter.
-function clearReconnect(port) {
-    port = Number(port);
-    const t = reconnectTimers.get(port);
-    if (t) { clearTimeout(t); reconnectTimers.delete(port); }
-    reconnectAttempts.delete(port);
-}
+// Reconnect state machine lives in the typed, unit-tested core bundle
+// (webview/vendor/rplot-core.js -> window.RPlotCore). main.js keeps ownership of
+// desiredPorts/activeSockets and the actual connect(); the manager only decides when.
+const reconnectMgr = new window.RPlotCore.ReconnectManager({
+    maxReconnect: 8,
+    isDesired: (port) => desiredPorts.has(Number(port)),
+    isActive: (port) => activeSockets.has(Number(port)),
+    connect: (port) => connectToPort(Number(port), desiredPorts.get(Number(port))),
+    log: (msg) => log(msg)
+});
 
-// Schedule a reconnect to a dropped port with linear backoff (capped), unless the
-// port is no longer wanted or we have exhausted the attempt budget.
-function scheduleReconnect(port, lang) {
-    port = Number(port);
-    if (reconnectTimers.has(port)) return;             // already scheduled
-    if (!desiredPorts.has(port)) return;               // no longer a live backend
-    const n = (reconnectAttempts.get(port) || 0) + 1;
-    // Sticky give-up: keep the counter above the budget so repeated onclose events
-    // do not restart the cycle. It is reset by a successful connect (clearReconnect)
-    // or by a fresh discovery calling connectToPort again.
-    if (n > MAX_RECONNECT) { log(`Giving up reconnect to port ${port}`); reconnectAttempts.set(port, n); return; }
-    reconnectAttempts.set(port, n);
-    const delay = Math.min(1000 * n, 5000);
-    log(`Reconnecting to port ${port} in ${delay}ms (attempt ${n}/${MAX_RECONNECT})`);
-    const t = setTimeout(() => {
-        reconnectTimers.delete(port);
-        if (desiredPorts.has(port) && !activeSockets.has(port)) {
-            connectToPort(port, desiredPorts.get(port) || lang);
-        }
-    }, delay);
-    reconnectTimers.set(port, t);
-}
+function clearReconnect(port) { reconnectMgr.clear(Number(port)); }
+function scheduleReconnect(port) { reconnectMgr.schedule(Number(port)); }
 
 const LOGOS = {
     julia: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><path d="M58.3 93.5c0 15.7-12.7 28.3-28.3 28.3-15.7 0-28.3-12.7-28.3-28.3 0-15.6 12.7-28.3 28.3-28.3 15.6-.1 28.3 12.6 28.3 28.3" fill="#cb3c33"/><path d="M30 123.4c-16.5 0-30-13.4-30-30s13.4-30 30-30 30 13.4 30 30-13.5 30-30 30zm0-56.6c-14.7 0-26.7 12-26.7 26.7s12 26.7 26.7 26.7 26.7-12 26.7-26.7-12-26.7-26.7-26.7z" fill="#eee"/><path d="M126.4 93.5c0 15.7-12.7 28.3-28.3 28.3s-28.3-12.7-28.3-28.3c0-15.6 12.7-28.3 28.3-28.3s28.3 12.6 28.3 28.3" fill="#9558b2"/><path d="M98 123.4c-16.5 0-30-13.4-30-30s13.4-30 30-30 30 13.4 30 30-13.4 30-30 30zm0-56.6c-14.7 0-26.7 12-26.7 26.7s12 26.7 26.7 26.7 26.7-12 26.7-26.7S112.8 66.8 98 66.8z" fill="#eee"/><path d="M92.4 34.5c0 15.6-12.7 28.3-28.3 28.3-15.7 0-28.3-12.7-28.3-28.3S48.4 6.2 64 6.2c15.7 0 28.4 12.7 28.4 28.3" fill="#389826"/><path d="M64 64.5c-16.5 0-30-13.4-30-30s13.4-30 30-30 30 13.4 30 30-13.5 30-30 30zm0-56.7c-14.7 0-26.7 12-26.7 26.7s12 26.7 26.7 26.7 26.7-12 26.7-26.7S78.7 7.8 64 7.8z" fill="#eee"/></svg>`,
@@ -275,7 +381,11 @@ function updateConnections(backends) {
     // Remember which ports we want to stay connected to, so an unexpected drop can
     // be told apart from a backend that genuinely went away (auto-reconnect).
     desiredPorts.clear();
-    for (const b of backends) desiredPorts.set(Number(b.port), b.language);
+    for (const b of backends) {
+        desiredPorts.set(Number(b.port), b.language);
+        // Remember the forwarded URL the extension resolved for this port, if any.
+        if (b.wsUrl) portUrls.set(Number(b.port), b.wsUrl);
+    }
 
     // 1. Close connections for ports no longer in the list
     for (const [port, socket] of activeSockets) {
@@ -286,6 +396,7 @@ function updateConnections(backends) {
             socket.close();
             activeSockets.delete(port);
             portLanguages.delete(port);
+            portUrls.delete(port);
         }
     }
     
@@ -327,7 +438,9 @@ function broadcastToBackends(data, targetPort = null) {
 }
 
 function connectToPort(port, language) {
-    const url = 'ws://127.0.0.1:' + port;
+    // Prefer the URL the extension resolved via asExternalUri (handles Remote-SSH,
+    // WSL, Dev Containers and Codespaces port forwarding); fall back to loopback.
+    const url = portUrls.get(Number(port)) || ('ws://127.0.0.1:' + port);
     log(`Connecting to ${url}...`);
     
     try {
@@ -551,7 +664,8 @@ function handleMessage(data, port) {
             
             // Merge: use server data but restore client metadata if ID matches
             const incomingPlots = serverPlots.map(serverPlot => {
-                const savedMetadata = savedMetadataMap.get(serverPlot.id);
+                // Prefer durable workspace metadata; fall back to webview state.
+                const savedMetadata = savedMetaMap.get(serverPlot.id) || savedMetadataMap.get(serverPlot.id);
                 return {
                     ...serverPlot,
                     data: plotUrls.get(serverPlot.id) || '', // Restore URL if we have it
@@ -560,20 +674,18 @@ function handleMessage(data, port) {
                 };
             });
             
-            // Multi-terminal stability: Replace ONLY plots from THIS port
-            const otherPlots = plots.filter(p => p.port && p.port !== port);
-            const taggedIncoming = incomingPlots.map(np => ({ ...np, port }));
-            // IDs are "r-<timestamp>" or "jl-<timestamp>"; parseInt("r-...") = NaN
-            // so strip the prefix before sorting to restore chronological order.
-            const idNum = id => Number(String(id).replace(/^[a-z]+-/i, '')) || 0;
-            plots = [...otherPlots, ...taggedIncoming].sort((a,b) => idNum(a.id) - idNum(b.id));
-            
+            // Multi-terminal stability + archive survival: handled by the typed,
+            // unit-tested core (keeps other live ports, keeps archived plots, and
+            // lets a live plot supersede its archived copy of the same id).
+            plots = window.RPlotCore.mergePlotLists(plots, incomingPlots, port);
+
             rehydratePlots();
+            persistArchive();
             break;
     }
 }
 
-async function exportAsFormat(format) {
+async function exportAsFormat(format, opts = {}) {
     if (currentIndex < 0) return;
     const plot = plots[currentIndex];
     const hasAnnotation = lastCanvasData.has(String(plot.id));
@@ -613,38 +725,60 @@ async function exportAsFormat(format) {
         }
     }
 
-    // Case 3: Raster (PNG) or Fallback
-    if (isSplitMode) {
-        getSplitCombinedBlob(plots[leftIndex], plots[rightIndex], (blob) => {
-            if (!blob) {
-                log('Failed to create split plot blob');
-                vscode.postMessage({ command: 'info', text: 'Export failed: Could not process images' });
-                return;
-            }
-            const reader = new FileReader();
-            reader.onloadend = () => {
+    // Case 3: Raster (PNG) / PDF (raster embedded) / Fallback
+    const deliverRaster = (blob) => {
+        if (!blob) {
+            log('Failed to create plot blob');
+            vscode.postMessage({ command: 'info', text: 'Export failed: Could not process image' });
+            return;
+        }
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            if (format === 'pdf') {
+                deliverPdf(reader.result);
+            } else {
                 vscode.postMessage({ command: 'save_data', data: reader.result, format: format });
-            };
-            reader.readAsDataURL(blob);
-        });
-    } else {
-        getCombinedPlotBlob(plot, (blob) => {
-            if (!blob) {
-                log('Failed to create plot blob');
-                vscode.postMessage({ command: 'info', text: 'Export failed: Could not process image' });
-                return;
             }
-            
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                vscode.postMessage({ 
-                    command: 'save_data', 
-                    data: reader.result, 
-                    format: format 
-                });
-            };
-            reader.readAsDataURL(blob);
-        });
+        };
+        reader.readAsDataURL(blob);
+    };
+
+    if (isSplitMode) {
+        getSplitCombinedBlob(plots[leftIndex], plots[rightIndex], deliverRaster, opts);
+    } else {
+        getCombinedPlotBlob(plot, deliverRaster, opts);
+    }
+}
+
+// Wrap a PNG data URL in a single-page PDF sized to the image, using the bundled
+// jsPDF. Keeps PDF export dependency-light and fully offline.
+function deliverPdf(pngDataUrl) {
+    try {
+        const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || (window.jsPDF);
+        if (!jsPDFCtor) {
+            vscode.postMessage({ command: 'info', text: 'PDF export unavailable: library not loaded' });
+            return;
+        }
+        const img = new Image();
+        img.onload = () => {
+            const w = img.naturalWidth || 800;
+            const h = img.naturalHeight || 600;
+            const doc = new jsPDFCtor({
+                orientation: w >= h ? 'landscape' : 'portrait',
+                unit: 'px',
+                format: [w, h]
+            });
+            doc.addImage(pngDataUrl, 'PNG', 0, 0, w, h);
+            const pdfDataUri = doc.output('datauristring');
+            vscode.postMessage({ command: 'save_data', data: pdfDataUri, format: 'pdf' });
+        };
+        img.onerror = () => {
+            vscode.postMessage({ command: 'info', text: 'PDF export failed: could not read image' });
+        };
+        img.src = pngDataUrl;
+    } catch (e) {
+        log('PDF export failed: ' + e);
+        vscode.postMessage({ command: 'info', text: 'PDF export failed' });
     }
 }
 
@@ -771,6 +905,11 @@ function addPlot(plotUrl, metadata = {}, port) {
         timestamp: metadata.timestamp || new Date().toLocaleTimeString(),
         note: metadata.note || '',
         isFavorite: metadata.isFavorite || false,
+        // Source provenance captured by the R server (for the code-actions menu).
+        code: metadata.code || '',
+        srcFile: metadata.srcFile || '',
+        srcLine1: metadata.srcLine1,
+        srcLine2: metadata.srcLine2,
         port: Number(port)
     };
     plots.push(plot);
@@ -778,6 +917,7 @@ function addPlot(plotUrl, metadata = {}, port) {
 
     updatePlotList();
     showPlot(currentIndex, true);
+    persistArchive();
 }
 
 function updateCurrentPlot(plotId, plotUrl, port) {
@@ -961,8 +1101,10 @@ function deletePlot(index, event) {
 
     // 5. Update state and UI
     saveState();
+    persistMeta();
+    persistArchive();
     updatePlotList();
-    
+
     if (plots.length > 0) {
         showPlot(currentIndex, false);
     } else {
@@ -1286,6 +1428,8 @@ function updateControls() {
     
     document.getElementById('exportBtn').disabled = !hasPlots;
     document.getElementById('copyBtn').disabled = !hasPlots;
+    const codeBtn = document.getElementById('codeBtn');
+    if (codeBtn) codeBtn.disabled = !hasPlots || isSplitMode;
     document.getElementById('newWindowBtn').disabled = !hasPlots;
     document.getElementById('clearBtn').disabled = !hasPlots;
     document.getElementById('zoomBtn').disabled = !hasPlots;
@@ -1309,6 +1453,10 @@ function nextPlot() { if (currentIndex < plots.length - 1) showPlot(currentIndex
 function clearAllPlots() {
      broadcastToBackends({ type: 'clear_all' });
      clearLocalPlots();
+     // Explicit user action: also wipe the durable gallery archive and metadata.
+     vscode.postMessage({ command: 'persist_archive', plots: [] });
+     vscode.postMessage({ command: 'persist_meta', meta: [] });
+     savedMetaMap = new Map();
 }
 
 function exportPlot() {
@@ -1500,11 +1648,116 @@ function handleDragEnd(event) {
     event.target.classList.remove('dragging');
 }
 
+// --- CODE ACTIONS (per-plot dropdown, left of the favorite icon) ---
+let codeMenuEl = null;
+let codeMenuIndex = -1;
+
+function buildCodeMenu() {
+    if (codeMenuEl) return codeMenuEl;
+    codeMenuEl = document.createElement('div');
+    codeMenuEl.className = 'code-menu';
+    codeMenuEl.style.display = 'none';
+    codeMenuEl.innerHTML =
+        '<div class="code-menu-item" data-act="copy">Copy Code</div>' +
+        '<div class="code-menu-item" data-act="reveal">Reveal Code in Console</div>' +
+        '<div class="code-menu-item" data-act="run">Run Code Again</div>' +
+        '<div class="code-menu-item" data-act="open">Open Source File</div>';
+    codeMenuEl.addEventListener('click', (e) => {
+        const item = e.target.closest('.code-menu-item');
+        if (!item || item.classList.contains('disabled')) { e.stopPropagation(); return; }
+        e.stopPropagation();
+        const act = item.getAttribute('data-act');
+        const idx = codeMenuIndex;
+        hideCodeMenu();
+        runCodeAction(act, idx);
+    });
+    document.body.appendChild(codeMenuEl);
+    return codeMenuEl;
+}
+
+function hideCodeMenu() {
+    if (codeMenuEl) codeMenuEl.style.display = 'none';
+    codeMenuIndex = -1;
+}
+
+function toggleCodeMenu(index, event) {
+    if (event) event.stopPropagation();
+    const menu = buildCodeMenu();
+    if (menu.style.display === 'block' && codeMenuIndex === index) { hideCodeMenu(); return; }
+    codeMenuIndex = index;
+
+    // Enable/disable items based on captured metadata.
+    const plot = plots[index] || {};
+    const hasCode = !!(plot.code && String(plot.code).trim());
+    const hasFile = !!(plot.srcFile && String(plot.srcFile).trim());
+    menu.querySelector('[data-act="copy"]').classList.toggle('disabled', !hasCode);
+    menu.querySelector('[data-act="reveal"]').classList.toggle('disabled', !hasCode);
+    menu.querySelector('[data-act="run"]').classList.toggle('disabled', !hasCode);
+    menu.querySelector('[data-act="open"]').classList.toggle('disabled', !hasFile);
+
+    // Position near the clicked button, clamped to the viewport.
+    menu.style.display = 'block';
+    const rect = (event && event.currentTarget)
+        ? event.currentTarget.getBoundingClientRect()
+        : { left: 8, right: 8, top: 8, bottom: 8 };
+    const mw = menu.offsetWidth || 190;
+    const mh = menu.offsetHeight || 130;
+    let left = rect.left;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    if (left < 8) left = 8;
+    let top = rect.bottom + 4;
+    if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+}
+
+// Toolbar entry point: acts on the currently selected plot.
+function toggleCodeMenuToolbar(event) {
+    if (event) event.stopPropagation();
+    if (currentIndex < 0 || currentIndex >= plots.length) return;
+    toggleCodeMenu(currentIndex, event);
+}
+
+function runCodeAction(act, index) {
+    const plot = plots[index];
+    if (!plot) return;
+    const code = plot.code || '';
+    const noCode = () => vscode.postMessage({ command: 'info', text: 'No source code captured for this plot' });
+    switch (act) {
+        case 'copy':
+            if (!code.trim()) return noCode();
+            navigator.clipboard.writeText(code).then(
+                () => vscode.postMessage({ command: 'info', text: 'Code copied to clipboard' }),
+                () => vscode.postMessage({ command: 'info', text: 'Copy failed: clipboard access required' })
+            );
+            break;
+        case 'reveal':
+            if (!code.trim()) return noCode();
+            vscode.postMessage({ command: 'reveal_code', code });
+            break;
+        case 'run':
+            if (!code.trim()) return noCode();
+            vscode.postMessage({ command: 'run_code', code });
+            break;
+        case 'open':
+            if (!plot.srcFile) { vscode.postMessage({ command: 'info', text: 'No source file captured for this plot' }); return; }
+            vscode.postMessage({ command: 'open_source', file: plot.srcFile, line1: plot.srcLine1, line2: plot.srcLine2 });
+            break;
+    }
+}
+
+// Dismiss the menu on any outside click, scroll or resize.
+window.addEventListener('click', () => hideCodeMenu());
+window.addEventListener('resize', () => hideCodeMenu());
+document.addEventListener('scroll', () => hideCodeMenu(), true);
+
 function toggleFavorite(index, event) {
     if (event) event.stopPropagation();
     if (index < 0 || index >= plots.length) return;
     plots[index].isFavorite = !plots[index].isFavorite;
     vscode.setState({ ...vscode.getState(), plots: plots });
+    persistMeta();
+    persistArchive();
     updatePlotList();
 }
 
@@ -1540,6 +1793,8 @@ function saveNote() {
     if (currentNoteIndex < 0 || currentNoteIndex >= plots.length) return;
     plots[currentNoteIndex].note = document.getElementById('noteTextarea').value.trim();
     vscode.setState({ ...vscode.getState(), plots: plots });
+    persistMeta();
+    persistArchive();
     updatePlotList();
     closeNoteModal();
 }
@@ -2331,28 +2586,43 @@ window.addEventListener('resize', () => {
     }
 });
 
-function getCombinedPlotBlob(plot, callback) {
+function getCombinedPlotBlob(plot, callback, opts = {}) {
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
         const canvas = document.createElement('canvas');
-        // Composite always as PNG for simplicity and annotation support
-        const scale = 2; // High DPI
-        canvas.width = (img.naturalWidth || 800) * scale;
-        canvas.height = (img.naturalHeight || 600) * scale;
-        
+        const natW = img.naturalWidth || 800;
+        const natH = img.naturalHeight || 600;
+
+        // Export presets: fixed dimensions (e.g. 1920x1080 slide) fit the plot inside
+        // while keeping aspect ratio and letterboxing on white; otherwise a scale
+        // factor acts as a DPI multiplier (1x screen, 2x high-DPI, 3x publication).
+        let cw, ch, dx = 0, dy = 0, dw, dh;
+        if (opts.width && opts.height) {
+            cw = opts.width; ch = opts.height;
+            const r = Math.min(cw / natW, ch / natH);
+            dw = natW * r; dh = natH * r;
+            dx = (cw - dw) / 2; dy = (ch - dh) / 2;
+        } else {
+            const scale = opts.scale || 2; // default High DPI
+            cw = natW * scale; ch = natH * scale;
+            dw = cw; dh = ch;
+        }
+        canvas.width = cw;
+        canvas.height = ch;
+
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = "white"; 
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        
-        // Overlay annotation
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, cw, ch);
+
+        ctx.drawImage(img, dx, dy, dw, dh);
+
+        // Overlay annotation, aligned with the plot placement above.
         const annotationData = lastCanvasData.get(String(plot.id));
         if (annotationData) {
             const annoImg = new Image();
             annoImg.onload = () => {
-                ctx.drawImage(annoImg, 0, 0, canvas.width, canvas.height);
+                ctx.drawImage(annoImg, dx, dy, dw, dh);
                 canvas.toBlob(callback, 'image/png', 0.95);
             };
             annoImg.onerror = () => {
@@ -2371,7 +2641,7 @@ function getCombinedPlotBlob(plot, callback) {
     img.src = plot.data;
 }
 
-async function getSplitCombinedBlob(plotL, plotR, callback) {
+async function getSplitCombinedBlob(plotL, plotR, callback, opts = {}) {
     const loadImg = (url) => new Promise((res, rej) => {
         const img = new Image();
         img.crossOrigin = "anonymous";
@@ -2382,7 +2652,9 @@ async function getSplitCombinedBlob(plotL, plotR, callback) {
 
     try {
         const [imgL, imgR] = await Promise.all([loadImg(plotL.data), loadImg(plotR.data)]);
-        const scale = 2; // High DPI
+        // Split view honours the preset scale (DPI multiplier); fixed-dimension
+        // presets fall back to their scale or the 2x High-DPI default.
+        const scale = opts.scale || 2;
         const wL = (imgL.naturalWidth || 800) * scale;
         const hL = (imgL.naturalHeight || 600) * scale;
         const wR = (imgR.naturalWidth || 800) * scale;
@@ -2507,6 +2779,8 @@ window.addEventListener('keydown', (e) => {
 });
 
 vscode.postMessage({ command: 'request_config' });
+vscode.postMessage({ command: 'request_meta' });
+vscode.postMessage({ command: 'request_archive' });
 setTimeout(() => {
     document.body.style.opacity = '1';
 }, 50);

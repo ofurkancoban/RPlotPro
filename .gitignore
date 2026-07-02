@@ -5,3 +5,8 @@ task.md
 .gitignore
 *.env
 .config/
+.vscode-test/
+out/test/
+out-webview/
+webview/src/*.js
+webview/src/*.js.map

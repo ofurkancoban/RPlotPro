@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile (type-check)
+        run: npm run compile
+
+      - name: Unit tests (webview core)
+        run: npm run test:unit
+
+      # VS Code integration tests need a display on Linux; xvfb provides one.
+      - name: Run tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm test
+
+      - name: Run tests (macOS / Windows)
+        if: runner.os != 'Linux'
+        run: npm test
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify the extension packages cleanly
+        run: npx --yes @vscode/vsce package --no-git-tag-version --out r-plot-pro-ci.vsix
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: r-plot-pro-vsix
+          path: r-plot-pro-ci.vsix

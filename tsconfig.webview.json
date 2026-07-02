@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "module": "commonjs",
+        "target": "es2020",
+        "outDir": "out-webview",
+        "rootDir": "webview/src",
+        "lib": ["es2020", "dom"],
+        "strict": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "sourceMap": false,
+        "types": ["node", "mocha"]
+    },
+    "include": ["webview/src/**/*.ts"]
+}
