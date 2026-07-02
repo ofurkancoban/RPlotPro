@@ -58,6 +58,10 @@
       {
         "command": "rPlotViewer.reportIssue",
         "title": "R Plot Pro: Report Issue"
+      },
+      {
+        "command": "rPlotViewer.attach",
+        "title": "R Plot Pro: Attach to Terminal"
       }
     ],
     "viewsContainers": {

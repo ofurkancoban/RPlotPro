@@ -11,7 +11,8 @@ const CONTRIBUTED_COMMANDS = [
     'rPlotViewer.previousPlot',
     'rPlotViewer.nextPlot',
     'rPlotViewer.removeFromRprofile',
-    'rPlotViewer.reportIssue'
+    'rPlotViewer.reportIssue',
+    'rPlotViewer.attach'
 ];
 
 suite('R Plot Pro smoke tests', () => {

@@ -514,9 +514,13 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         context.subscriptions.push(vscode.commands.registerCommand('rPlotViewer.attach', () => {
-            if (vscode.window.activeTerminal) {
-                tryInject(vscode.window.activeTerminal, true);
-                vscode.window.showInformationMessage('R Plot Pro: Force-attaching to terminal...');
+            const term = vscode.window.activeTerminal;
+            if (term) {
+                term.show(true);
+                tryInject(term, true);
+                vscode.window.showInformationMessage(`R Plot Pro: Force-attaching to "${term.name}"...`);
+            } else {
+                vscode.window.showWarningMessage('R Plot Pro: No active terminal to attach to. Focus an R terminal first.');
             }
         }));
 
