@@ -6,6 +6,19 @@ import * as os from 'os';
 type Backend = { port: number; language?: string };
 type ResolvedBackend = Backend & { wsUrl: string };
 
+// Structured logging: one output channel + a small ring buffer so the
+// "Report Issue" command can attach recent activity to a prefilled GitHub issue.
+let outputChannel: vscode.OutputChannel | undefined;
+const LOG_BUFFER_MAX = 200;
+const logBuffer: string[] = [];
+
+function logLine(msg: string) {
+    const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logBuffer.push(line);
+    if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
+    outputChannel?.appendLine(line);
+}
+
 type ExportPreset = {
     label: string;
     description: string;
@@ -134,9 +147,10 @@ async function setupRprofileIntegration(context: vscode.ExtensionContext): Promi
 
 export function activate(context: vscode.ExtensionContext) {
     // Create diagnostic output channel
-    const outputChannel = vscode.window.createOutputChannel("R Plot Pro");
-    outputChannel.appendLine("R Plot Pro: Extension activated.");
-    
+    outputChannel = vscode.window.createOutputChannel("R Plot Pro");
+    context.subscriptions.push(outputChannel);
+    logLine("Extension activated.");
+
     const plotProvider = new PlotViewProvider(context.extensionUri, context.workspaceState);
 
     context.subscriptions.push(
@@ -262,6 +276,14 @@ export function activate(context: vscode.ExtensionContext) {
     // Used by .Rprofile hook to source init.R at R startup (zero timing gap)
     context.environmentVariableCollection.replace('RPLOT_PRO_INIT', normalizedInitPath);
 
+    // Configurable port range: passed to the R server so users behind strict
+    // firewalls can pin the plot server to an allowed range.
+    const rangeCfg = vscode.workspace.getConfiguration('rPlotViewer');
+    const minPort = rangeCfg.get<number>('minPort', 10000);
+    const maxPort = rangeCfg.get<number>('maxPort', 30000);
+    context.environmentVariableCollection.replace('RPLOT_PORT_MIN', String(minPort));
+    context.environmentVariableCollection.replace('RPLOT_PORT_MAX', String(maxPort));
+
     plotProvider.setSessionConfigPath(uniqueConfigDir);
 
     // Gallery archive lives in global storage, keyed by the workspace-stable configId
@@ -283,6 +305,32 @@ export function activate(context: vscode.ExtensionContext) {
             } else {
                 vscode.window.showInformationMessage('R Plot Pro: No hook found in ~/.Rprofile.');
             }
+        })
+    );
+
+    // Report Issue: collect diagnostics + recent log and open a prefilled GitHub issue.
+    context.subscriptions.push(
+        vscode.commands.registerCommand('rPlotViewer.reportIssue', () => {
+            const ext = vscode.extensions.getExtension('ofurkancoban.r-plot-pro');
+            const version = ext?.packageJSON?.version ?? 'unknown';
+            const backends = plotProvider.getBackends();
+            const diag = [
+                `- Extension version: ${version}`,
+                `- VS Code version: ${vscode.version}`,
+                `- Platform: ${process.platform} (${process.arch})`,
+                `- Remote: ${vscode.env.remoteName ?? 'local'}`,
+                `- Active backends: ${backends.length ? backends.map(b => `${b.language ?? '?'}:${b.port}`).join(', ') : 'none'}`
+            ].join('\n');
+            const recentLog = logBuffer.slice(-40).join('\n');
+            outputChannel?.show(true);
+            const body =
+                `**Describe the problem**\n\n\n**Steps to reproduce**\n\n\n` +
+                `**Environment**\n${diag}\n\n` +
+                `**Recent log**\n\`\`\`\n${recentLog}\n\`\`\`\n`;
+            const url =
+                `https://github.com/ofurkancoban/RPlotPro/issues/new` +
+                `?title=${encodeURIComponent('[Bug] ')}&body=${encodeURIComponent(body)}`;
+            vscode.env.openExternal(vscode.Uri.parse(url));
         })
     );
 
@@ -339,7 +387,7 @@ export function activate(context: vscode.ExtensionContext) {
             // Atomic R Injection
             if (isRTerminal && !injectedPids.has(pid)) {
                 injectedPids.add(pid);
-                outputChannel.appendLine(`[Sentinel] Attaching to R: "${name}" | PID: ${pid}`);
+                logLine(`[Sentinel] Attaching to R: "${name}" | PID: ${pid}`);
 
                 setTimeout(() => {
                     // Nano-Path: Use /tmp on Unix for shorter commands (prevents wrapping)
@@ -357,7 +405,7 @@ export function activate(context: vscode.ExtensionContext) {
             // Atomic Julia Injection
             if (isJuliaTerminal && !injectedPids.has(pid)) {
                 injectedPids.add(pid);
-                outputChannel.appendLine(`[Sentinel] Precise Attachment (Julia) | PID: ${pid}`);
+                logLine(`[Sentinel] Precise Attachment (Julia) | PID: ${pid}`);
 
                 setTimeout(() => {
                     const bootDir = (os.platform() !== 'win32' && fs.existsSync('/tmp')) ? '/tmp' : os.tmpdir();
@@ -372,21 +420,38 @@ export function activate(context: vscode.ExtensionContext) {
             }
         };
 
-        // Continuous Sentinel: Scans all terminals every 4s to catch delayed session starts (Mac/zsh)
-        const sentinel = setInterval(() => {
-            vscode.window.terminals.forEach(term => tryInject(term));
-        }, 4000);
-        context.subscriptions.push({ dispose: () => clearInterval(sentinel) });
+        // Event-driven Sentinel: instead of polling terminals forever, we scan only
+        // for a short window after terminal activity (open/switch). A shell may report
+        // its name as "R" only once the R session actually starts, so we still need a
+        // few scans to catch delayed starts (Mac/zsh) — but the poll auto-stops when
+        // idle, dropping CPU usage to zero once everything is attached.
+        let sentinelTimer: NodeJS.Timeout | undefined;
+        let sentinelUntil = 0;
+        const kickSentinel = (windowMs = 30000) => {
+            sentinelUntil = Date.now() + windowMs;
+            if (sentinelTimer) return;
+            sentinelTimer = setInterval(() => {
+                if (Date.now() > sentinelUntil) {
+                    clearInterval(sentinelTimer);
+                    sentinelTimer = undefined;
+                    return;
+                }
+                vscode.window.terminals.forEach(term => tryInject(term));
+            }, 3000);
+        };
+        context.subscriptions.push({ dispose: () => { if (sentinelTimer) clearInterval(sentinelTimer); } });
 
         // Immediate triggers for better UX
         if (vscode.window.activeTerminal) tryInject(vscode.window.activeTerminal);
+        kickSentinel();
 
         context.subscriptions.push(vscode.window.onDidOpenTerminal(term => {
+            kickSentinel();
             setTimeout(() => tryInject(term), 2000);
         }));
 
         context.subscriptions.push(vscode.window.onDidChangeActiveTerminal(term => {
-            if (term) tryInject(term);
+            if (term) { tryInject(term); kickSentinel(); }
         }));
 
         context.subscriptions.push(vscode.commands.registerCommand('rPlotViewer.attach', () => {
@@ -510,6 +575,13 @@ class PlotViewProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'request_archive':
                     this.postMessage({ command: 'restore_archive', plots: this.readArchive() });
+                    break;
+                case 'log':
+                    logLine(`[webview] ${message.text}`);
+                    break;
+                case 'info':
+                    logLine(`[info] ${message.text}`);
+                    vscode.window.showInformationMessage(`R Plot Pro: ${message.text}`);
                     break;
                 case 'save_data':
                     vscode.window.showSaveDialog({

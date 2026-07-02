@@ -345,14 +345,20 @@ local(
                 hook_active <<- TRUE
                 return(invisible(server))
             }
-            if (is.null(port)) port <- sample(10000:30000, 1)
+            # Port range is configurable via the extension (rPlotViewer.minPort/maxPort).
+            port_min <- suppressWarnings(as.integer(Sys.getenv("RPLOT_PORT_MIN", "10000")))
+            port_max <- suppressWarnings(as.integer(Sys.getenv("RPLOT_PORT_MAX", "30000")))
+            if (is.na(port_min) || is.na(port_max) || port_max <= port_min) {
+                port_min <- 10000L; port_max <- 30000L
+            }
+            if (is.null(port)) port <- sample(port_min:port_max, 1)
 
             env_config_path <- Sys.getenv("VSCODE_R_PLOT_CONFIG")
             local_config_file <- if (nzchar(env_config_path)) {
                 if (isTRUE(file.info(env_config_path)$isdir)) file.path(env_config_path, paste0("port_", port, ".json")) else env_config_path
             } else file.path(getwd(), ".r_plot_config.json")
 
-            writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.47.0"), auto_unbox = TRUE), local_config_file)
+            writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.48.0"), auto_unbox = TRUE), local_config_file)
 
             reg.finalizer(.GlobalEnv, function(e) { if (file.exists(local_config_file)) unlink(local_config_file) }, onexit = TRUE)
 
@@ -373,8 +379,8 @@ local(
                             error = function(e2) NULL)
                     }
                     if (is.null(server)) {
-                        port <<- sample(10000:30000, 1)
-                        writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.47.0"), auto_unbox = TRUE), local_config_file)
+                        port <<- sample(port_min:port_max, 1)
+                        writeLines(jsonlite::toJSON(list(port = port, language = "r", version = "0.48.0"), auto_unbox = TRUE), local_config_file)
                         server <<- startServer(host = "127.0.0.1", port = port, app = list(call = plot_http_handler, onWSOpen = plot_ws_handler))
                     }
                 } else stop(e)
@@ -460,7 +466,7 @@ local(
             for (c in clients) tryCatch(c$send(msg), error = function(e) {})
         }
 
-        .vsc_rplot$version  <- "0.47.0"
+        .vsc_rplot$version  <- "0.48.0"
         .vsc_rplot$run_file <- function(file_path) { utils::source(file_path); invisible(NULL) }
 
         # Direct capture exposed for patched source() — bypasses hook_active so

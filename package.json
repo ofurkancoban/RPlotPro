@@ -2,7 +2,7 @@
   "name": "r-plot-pro",
   "displayName": "R Plot Pro",
   "description": "The ultimate R and Julia visualization experience for VS Code. High-performance, real-time, and designed for professionals who demand the best of RStudio and Positron.",
-  "version": "0.47.0",
+  "version": "0.48.0",
   "license": "MIT",
   "publisher": "ofurkancoban",
   "icon": "assets/icon.png",
@@ -54,6 +54,10 @@
       {
         "command": "rPlotViewer.removeFromRprofile",
         "title": "R Plot Pro: Remove .Rprofile Hook"
+      },
+      {
+        "command": "rPlotViewer.reportIssue",
+        "title": "R Plot Pro: Report Issue"
       }
     ],
     "viewsContainers": {
@@ -92,12 +96,23 @@
           "type": "number",
           "default": 600,
           "description": "Default plot height in pixels"
+        },
+        "rPlotViewer.minPort": {
+          "type": "number",
+          "default": 10000,
+          "description": "Lowest port the R plot server may bind to"
+        },
+        "rPlotViewer.maxPort": {
+          "type": "number",
+          "default": 30000,
+          "description": "Highest port the R plot server may bind to"
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run sync-version && npm run compile",
+    "sync-version": "node scripts/sync-version.js",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",

@@ -148,9 +148,11 @@ if (state.annotations) {
     }
 }
 
-function log(msg) { 
-    console.log('[R Plot]', msg); 
+function log(msg) {
+    console.log('[R Plot]', msg);
     logToUI(msg);
+    // Mirror debug lines to the extension's Output channel for diagnostics.
+    try { vscode.postMessage({ command: 'log', text: String(msg) }); } catch (_) {}
 }
 
 // --- SCALING & DIMENSIONS (New JS-driven approach) ---
