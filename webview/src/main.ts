@@ -10,7 +10,6 @@ declare const acquireVsCodeApi: any;
 // Tighten this module by module: replace a group of these with real casts, then delete
 // the corresponding lines below.
 declare global {
-    interface Window { jspdf?: any; jsPDF?: any; }
     interface WebSocket { _intentionalClose?: boolean; }
     interface EventTarget { tagName?: any; isContentEditable?: any; value?: any; closest?: any; }
     interface Element { style?: any; src?: any; value?: any; }
@@ -511,7 +510,7 @@ function connectToPort(port, language) {
             }
         };
     } catch (e) {
-        log(`Failed connection to ${port}: ${e.message}`);
+        log(`Failed connection to ${port}: ${(e as any)?.message ?? e}`);
     }
 }
 
@@ -751,7 +750,8 @@ async function exportAsFormat(format, opts = {}) {
 // jsPDF. Keeps PDF export dependency-light and fully offline.
 function deliverPdf(pngDataUrl) {
     try {
-        const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || (window.jsPDF);
+        const w = window as any; // jsPDF UMD global, loaded via a separate script tag
+        const jsPDFCtor = (w.jspdf && w.jspdf.jsPDF) || w.jsPDF;
         if (!jsPDFCtor) {
             vscode.postMessage({ command: 'info', text: 'PDF export unavailable: library not loaded' });
             return;
