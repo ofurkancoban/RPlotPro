@@ -12,3 +12,5 @@ export type { RectLike, Point, ArrowGeometry } from './annotation';
 export { AnnotationHistory } from './history';
 export { sniffImageMime } from './format';
 export type { ImageMime } from './format';
+export { diffPixels } from './diff';
+export type { DiffOptions, DiffResult } from './diff';

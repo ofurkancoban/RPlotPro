@@ -1456,6 +1456,9 @@ function updateControls() {
         splitBtn.classList.toggle('split-active-btn', isSplitMode);
     }
 
+    const diffBtn = document.getElementById('diffBtn');
+    if (diffBtn) diffBtn.disabled = !canSplit; // needs at least two plots
+
     document.getElementById('plotInfo').textContent = isSplitMode ? 'SPLIT' : (hasPlots ? `${currentIndex + 1} / ${plots.length}` : '');
 }
 
@@ -1555,6 +1558,82 @@ async function copySvgToClipboard() {
     } catch (err) {
         log('Copy as SVG failed: ' + err);
         vscode.postMessage({ command: 'info', text: 'Copy as SVG failed: clipboard access required' });
+    }
+}
+
+// --- Pixel diff view ---
+// Overlays two plots and paints the pixels that changed, answering "how did this plot
+// change when I tweaked the code/parameters?". Picks the pair from the split-view
+// selection when active, otherwise the current plot vs the previous one.
+let diffA = -1, diffB = -1;
+
+function openDiffView() {
+    let a = -1, b = -1;
+    if (isSplitMode && leftIndex >= 0 && rightIndex >= 0) {
+        a = leftIndex; b = rightIndex;
+    } else if (currentIndex >= 1) {
+        a = currentIndex - 1; b = currentIndex;
+    }
+    if (a < 0 || b < 0 || !plots[a] || !plots[b]) {
+        vscode.postMessage({ command: 'info', text: 'Diff needs two plots (pick two in Split View, or view a plot after the first)' });
+        return;
+    }
+    diffA = a; diffB = b;
+    document.getElementById('diffModal').classList.add('show');
+    computeDiff();
+}
+
+function closeDiffModal() {
+    document.getElementById('diffModal').classList.remove('show');
+    diffA = -1; diffB = -1;
+}
+
+async function computeDiff() {
+    if (diffA < 0 || diffB < 0) return;
+    const stats = document.getElementById('diffStats');
+    const canvas = document.getElementById('diffCanvas');
+    if (!canvas) return;
+
+    try {
+        const load = (url): Promise<HTMLImageElement> => new Promise<HTMLImageElement>((res, rej) => {
+            const img = new Image();
+            img.onload = () => res(img);
+            img.onerror = rej;
+            img.src = url;
+        });
+        const [imgA, imgB] = await Promise.all([load(plots[diffA].data), load(plots[diffB].data)]);
+
+        // Rasterise both onto white canvases of a common size (A's native size).
+        const w = imgA.naturalWidth || 800;
+        const h = imgA.naturalHeight || 600;
+        const mk = (img) => {
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            const x = c.getContext('2d');
+            x.fillStyle = 'white'; x.fillRect(0, 0, w, h);
+            x.drawImage(img, 0, 0, w, h);
+            return x.getImageData(0, 0, w, h);
+        };
+        const da = mk(imgA), db = mk(imgB);
+
+        const thrEl = document.getElementById('diffThreshold');
+        const threshold = thrEl ? Number(thrEl.value) || 0 : 16;
+        const r = RPlotCore.diffPixels(da.data, db.data, { threshold });
+
+        canvas.width = w; canvas.height = h;
+        const outCtx = canvas.getContext('2d');
+        const outImage = outCtx.createImageData(w, h);
+        outImage.data.set(r.out);
+        outCtx.putImageData(outImage, 0, 0);
+
+        const pct = r.total ? (100 * r.changed / r.total) : 0;
+        if (stats) {
+            stats.textContent = `Plot ${diffA + 1} vs Plot ${diffB + 1}: `
+                + `${r.changed.toLocaleString()} of ${r.total.toLocaleString()} pixels changed (${pct.toFixed(2)}%)`;
+        }
+    } catch (e) {
+        log('Diff failed: ' + e);
+        if (stats) stats.textContent = 'Diff failed: could not rasterise one of the plots';
     }
 }
 
@@ -2845,6 +2924,9 @@ Object.assign(window as any, {
     confirmTextAnnotation,
     copyToClipboard,
     copySvgToClipboard,
+    openDiffView,
+    closeDiffModal,
+    computeDiff,
     deletePlot,
     exportPlot,
     focusPane,
