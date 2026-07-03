@@ -1834,6 +1834,45 @@ function setInspectMode(mode) {
     ensureInspectTip().style.display = 'none';
 }
 
+// Combine several plots (favourites if any, else the whole gallery, capped) into one
+// grid PNG for reports. Each plot is fit into its cell preserving aspect ratio.
+async function exportGridMontage() {
+    const favs = plots.filter(p => p.isFavorite);
+    const set = (favs.length ? favs : plots).slice(0, 16);
+    if (set.length < 2) {
+        vscode.postMessage({ command: 'info', text: 'Grid export needs at least two plots (favourite the ones you want)' });
+        return;
+    }
+    try {
+        const load = (url): Promise<HTMLImageElement> => new Promise<HTMLImageElement>((res, rej) => {
+            const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url;
+        });
+        const imgs = await Promise.all(set.map(p => load(p.data)));
+        const cellW = 500, cellH = 360, gap = 14;
+        const layout = RPlotCore.computeGridLayout(imgs.length, cellW, cellH, gap);
+        const canvas = document.createElement('canvas');
+        canvas.width = layout.canvasW; canvas.height = layout.canvasH;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'white'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        imgs.forEach((im, i) => {
+            const cell = layout.cells[i];
+            const nw = im.naturalWidth || 800, nh = im.naturalHeight || 600;
+            const r = Math.min(cell.w / nw, cell.h / nh);
+            const dw = nw * r, dh = nh * r;
+            ctx.drawImage(im, cell.x + (cell.w - dw) / 2, cell.y + (cell.h - dh) / 2, dw, dh);
+        });
+        canvas.toBlob((blob) => {
+            if (!blob) { vscode.postMessage({ command: 'info', text: 'Grid export failed' }); return; }
+            const reader = new FileReader();
+            reader.onloadend = () => vscode.postMessage({ command: 'save_data', data: reader.result, format: 'png' });
+            reader.readAsDataURL(blob);
+        }, 'image/png', 0.95);
+    } catch (e) {
+        log('Grid export failed: ' + e);
+        vscode.postMessage({ command: 'info', text: 'Grid export failed' });
+    }
+}
+
 function refreshLayout() {
      const w = window.innerWidth;
      const h = window.innerHeight;
@@ -2119,7 +2158,9 @@ function buildSettingsMenu() {
         '<div class="code-menu-sep"></div>' +
         '<div class="code-menu-item" data-act="mode-hover"></div>' +
         '<div class="code-menu-item" data-act="mode-measure"></div>' +
-        '<div class="code-menu-item" data-act="mode-crop"></div>';
+        '<div class="code-menu-item" data-act="mode-crop"></div>' +
+        '<div class="code-menu-sep"></div>' +
+        '<div class="code-menu-item" data-act="montage">Export gallery as grid (PNG)</div>';
     settingsMenuEl.addEventListener('click', (e) => {
         const item = e.target.closest('.code-menu-item');
         if (!item || item.classList.contains('disabled')) { e.stopPropagation(); return; }
@@ -2132,6 +2173,7 @@ function buildSettingsMenu() {
         } else if (act === 'mode-hover') setInspectMode('hover');
         else if (act === 'mode-measure') setInspectMode('measure');
         else if (act === 'mode-crop') setInspectMode('crop');
+        else if (act === 'montage') { hideSettingsMenu(); exportGridMontage(); return; }
         updateSettingsMenu();
     });
     document.body.appendChild(settingsMenuEl);
