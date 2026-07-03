@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { aspectRatio, computePlotDimensions, computeExportCanvas, paletteScale, computeSplitCanvas } from './geometry';
+import { aspectRatio, computePlotDimensions, computeExportCanvas, paletteScale, computeSplitCanvas, computeGridLayout } from './geometry';
 
 suite('aspectRatio', () => {
     test('named aspects', () => {
@@ -115,5 +115,30 @@ suite('computeSplitCanvas', () => {
         const s = computeSplitCanvas(0, 0, 0, 0, 1);
         assert.strictEqual(s.canvasW, 1600);
         assert.strictEqual(s.canvasH, 600);
+    });
+});
+
+suite('computeGridLayout', () => {
+    test('chooses a near-square grid', () => {
+        assert.deepStrictEqual([computeGridLayout(4, 10, 10).cols, computeGridLayout(4, 10, 10).rows], [2, 2]);
+        assert.deepStrictEqual([computeGridLayout(5, 10, 10).cols, computeGridLayout(5, 10, 10).rows], [3, 2]);
+        assert.deepStrictEqual([computeGridLayout(1, 10, 10).cols, computeGridLayout(1, 10, 10).rows], [1, 1]);
+    });
+
+    test('cell positions include the gap and are row-major', () => {
+        const g = computeGridLayout(3, 100, 50, 10);
+        assert.strictEqual(g.cols, 2);
+        assert.strictEqual(g.rows, 2);
+        assert.strictEqual(g.canvasW, 2 * 100 + 3 * 10); // 230
+        assert.strictEqual(g.canvasH, 2 * 50 + 3 * 10);   // 130
+        assert.deepStrictEqual(g.cells[0], { x: 10, y: 10, w: 100, h: 50 });
+        assert.deepStrictEqual(g.cells[1], { x: 120, y: 10, w: 100, h: 50 });
+        assert.deepStrictEqual(g.cells[2], { x: 10, y: 70, w: 100, h: 50 });
+    });
+
+    test('empty for zero items', () => {
+        const g = computeGridLayout(0, 10, 10);
+        assert.strictEqual(g.canvasW, 0);
+        assert.strictEqual(g.cells.length, 0);
     });
 });

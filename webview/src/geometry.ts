@@ -113,6 +113,35 @@ export interface SplitCanvas {
     right: Box;
 }
 
+export interface GridLayout {
+    cols: number;
+    rows: number;
+    canvasW: number;
+    canvasH: number;
+    cells: Box[]; // one per item, row-major
+}
+
+// Near-square grid layout for a montage of n plots at a fixed cell size, with a uniform
+// gap around and between cells. Pure so the placement is unit-testable.
+export function computeGridLayout(n: number, cellW: number, cellH: number, gap = 12): GridLayout {
+    const count = Math.max(0, Math.floor(n));
+    const cols = count > 0 ? Math.ceil(Math.sqrt(count)) : 0;
+    const rows = cols > 0 ? Math.ceil(count / cols) : 0;
+    const cells: Box[] = [];
+    for (let i = 0; i < count; i++) {
+        const c = i % cols;
+        const r = Math.floor(i / cols);
+        cells.push({ x: gap + c * (cellW + gap), y: gap + r * (cellH + gap), w: cellW, h: cellH });
+    }
+    return {
+        cols,
+        rows,
+        canvasW: cols > 0 ? cols * cellW + (cols + 1) * gap : 0,
+        canvasH: rows > 0 ? rows * cellH + (rows + 1) * gap : 0,
+        cells
+    };
+}
+
 // Side-by-side split-export layout: two plots drawn at `scale`, vertically centred
 // on a white canvas as wide as both and as tall as the taller one.
 export function computeSplitCanvas(
