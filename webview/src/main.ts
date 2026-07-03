@@ -168,6 +168,9 @@ function detectVsCodeDark() {
 }
 let darkModeUserSet = typeof state.darkMode === 'boolean';
 let isDarkMode = darkModeUserSet ? state.darkMode : detectVsCodeDark();
+
+// User setting (persisted): show data coordinates when hovering a static plot.
+let hoverInspectEnabled = state.hoverInspect !== false;
 let lastCanvasData = new Map(); // Store base64 canvas data per plot ID
 // Per-plot zoom level (plotId -> zoom class name e.g. 'fit','100'). Remembered so each
 // plot keeps its own zoom instead of a single global one.
@@ -1656,7 +1659,10 @@ function initHoverInspect() {
 
     img.addEventListener('mousemove', (e) => {
         const plot = currentIndex >= 0 ? plots[currentIndex] : null;
-        if (isAnnotating || isSplitMode || !plot || !plot.coords) { tip.style.display = 'none'; return; }
+        const active = hoverInspectEnabled && !isAnnotating && !isSplitMode && plot && plot.coords;
+        if (!active) { tip.style.display = 'none'; img.style.cursor = ''; return; }
+        // Crosshair over the whole plot makes the read-out point unambiguous.
+        img.style.cursor = 'crosshair';
         const rect = img.getBoundingClientRect();
         const d = RPlotCore.dataAtPixel(e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, plot.coords);
         if (!d) { tip.style.display = 'none'; return; }
@@ -1665,7 +1671,7 @@ function initHoverInspect() {
         tip.style.left = (e.clientX + 14) + 'px';
         tip.style.top = (e.clientY + 14) + 'px';
     });
-    img.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+    img.addEventListener('mouseleave', () => { tip.style.display = 'none'; img.style.cursor = ''; });
 }
 
 function refreshLayout() {
@@ -1940,6 +1946,61 @@ function toggleCopyMenu(event) {
     menu.style.top = top + 'px';
 }
 
+// --- SETTINGS MENU (toolbar dropdown with toggles) ---
+let settingsMenuEl = null;
+
+function buildSettingsMenu() {
+    if (settingsMenuEl) return settingsMenuEl;
+    settingsMenuEl = document.createElement('div');
+    settingsMenuEl.className = 'code-menu';
+    settingsMenuEl.style.display = 'none';
+    settingsMenuEl.innerHTML =
+        '<div class="code-menu-item" data-act="toggle-inspect"></div>';
+    settingsMenuEl.addEventListener('click', (e) => {
+        const item = e.target.closest('.code-menu-item');
+        if (!item) { e.stopPropagation(); return; }
+        e.stopPropagation();
+        if (item.getAttribute('data-act') === 'toggle-inspect') {
+            hoverInspectEnabled = !hoverInspectEnabled;
+            vscode.setState({ ...vscode.getState(), hoverInspect: hoverInspectEnabled });
+            if (!hoverInspectEnabled && inspectTipEl) inspectTipEl.style.display = 'none';
+            updateSettingsMenu();
+        }
+    });
+    document.body.appendChild(settingsMenuEl);
+    return settingsMenuEl;
+}
+
+function updateSettingsMenu() {
+    if (!settingsMenuEl) return;
+    const item = settingsMenuEl.querySelector('[data-act="toggle-inspect"]');
+    if (item) item.textContent = (hoverInspectEnabled ? '✓ ' : '  ') + 'Hover to inspect';
+}
+
+function hideSettingsMenu() {
+    if (settingsMenuEl) settingsMenuEl.style.display = 'none';
+}
+
+function toggleSettingsMenu(event) {
+    if (event) event.stopPropagation();
+    const menu = buildSettingsMenu();
+    if (menu.style.display === 'block') { hideSettingsMenu(); return; }
+    updateSettingsMenu();
+    menu.style.display = 'block';
+    const rect = (event && event.currentTarget)
+        ? event.currentTarget.getBoundingClientRect()
+        : { left: 8, right: 8, top: 8, bottom: 8 };
+    const mw = menu.offsetWidth || 190;
+    const mh = menu.offsetHeight || 44;
+    let left = rect.right - mw;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    if (left < 8) left = 8;
+    let top = rect.bottom + 4;
+    if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+}
+
 // Toolbar entry point: acts on the currently selected plot.
 function toggleCodeMenuToolbar(event) {
     if (event) event.stopPropagation();
@@ -1976,9 +2037,9 @@ function runCodeAction(act, index) {
 }
 
 // Dismiss the menu on any outside click, scroll or resize.
-window.addEventListener('click', () => { hideCodeMenu(); hideCopyMenu(); });
-window.addEventListener('resize', () => { hideCodeMenu(); hideCopyMenu(); });
-document.addEventListener('scroll', () => { hideCodeMenu(); hideCopyMenu(); }, true);
+window.addEventListener('click', () => { hideCodeMenu(); hideCopyMenu(); hideSettingsMenu(); });
+window.addEventListener('resize', () => { hideCodeMenu(); hideCopyMenu(); hideSettingsMenu(); });
+document.addEventListener('scroll', () => { hideCodeMenu(); hideCopyMenu(); hideSettingsMenu(); }, true);
 
 function toggleFavorite(index, event) {
     if (event) event.stopPropagation();
@@ -3011,6 +3072,7 @@ Object.assign(window as any, {
     copyToClipboard,
     copySvgToClipboard,
     toggleCopyMenu,
+    toggleSettingsMenu,
     openDiffView,
     closeDiffModal,
     computeDiff,
