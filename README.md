@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://open-vsx.org/extension/ofurkancoban/r-plot-pro"><img src="https://img.shields.io/open-vsx/dt/ofurkancoban/r-plot-pro?style=for-the-badge" alt="Open VSX Downloads"></a>
-  <img src="https://img.shields.io/badge/Version-0.48.0-green?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-0.49.0-green?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/License-MIT-orange?style=for-the-badge" alt="License">
   <a href="https://marketplace.visualstudio.com/items?itemName=ofurkancoban.r-plot-pro"><img src="https://img.shields.io/badge/Marketplace-ofurkancoban-blue?style=for-the-badge&logo=visual-studio-code" alt="VS Code Marketplace"></a>
 </p>
