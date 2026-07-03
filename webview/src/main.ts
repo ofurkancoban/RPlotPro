@@ -537,6 +537,9 @@ function handleBinaryMessage(buffer, port) {
         const metaJson = decoder.decode(metaBytes);
         const metadata = JSON.parse(metaJson);
         const pid = metadata.id ? String(metadata.id) : null;
+        if (metadata.points && metadata.points.x) {
+            log(`Hover-snap points received: ${metadata.points.x.length}`);
+        }
         
         const payload = new Uint8Array(buffer, 4 + metaLen);
         log(`Payload length: ${payload.byteLength} bytes`);

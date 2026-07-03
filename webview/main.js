@@ -780,6 +780,9 @@
       const metaJson = decoder.decode(metaBytes);
       const metadata = JSON.parse(metaJson);
       const pid = metadata.id ? String(metadata.id) : null;
+      if (metadata.points && metadata.points.x) {
+        log(`Hover-snap points received: ${metadata.points.x.length}`);
+      }
       const payload = new Uint8Array(buffer, 4 + metaLen);
       log(`Payload length: ${payload.byteLength} bytes`);
       const sniff = payload.byteLength > 10 ? new TextDecoder().decode(payload.slice(0, 50)) : "";
