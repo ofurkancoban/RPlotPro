@@ -2022,7 +2022,7 @@
     codeMenuEl = document.createElement("div");
     codeMenuEl.className = "code-menu";
     codeMenuEl.style.display = "none";
-    codeMenuEl.innerHTML = '<div class="code-menu-item" data-act="copy">Copy Code</div><div class="code-menu-item" data-act="reveal">Reveal Code in Console</div><div class="code-menu-item" data-act="run">Run Code Again</div><div class="code-menu-item" data-act="open">Open Source File</div>';
+    codeMenuEl.innerHTML = '<div class="code-menu-item" data-act="copy">Copy Code</div><div class="code-menu-item" data-act="reprex">Copy Reproducible Snippet</div><div class="code-menu-item" data-act="reveal">Reveal Code in Console</div><div class="code-menu-item" data-act="run">Run Code Again</div><div class="code-menu-sep"></div><div class="code-menu-item" data-act="card">Export Plot Card (PNG)</div><div class="code-menu-item" data-act="open">Open Source File</div>';
     codeMenuEl.addEventListener("click", (e) => {
       const item = e.target.closest(".code-menu-item");
       if (!item || item.classList.contains("disabled")) {
@@ -2054,6 +2054,7 @@
     const hasCode = !!(plot.code && String(plot.code).trim());
     const hasFile = !!(plot.srcFile && String(plot.srcFile).trim());
     menu.querySelector('[data-act="copy"]').classList.toggle("disabled", !hasCode);
+    menu.querySelector('[data-act="reprex"]').classList.toggle("disabled", !hasCode);
     menu.querySelector('[data-act="reveal"]').classList.toggle("disabled", !hasCode);
     menu.querySelector('[data-act="run"]').classList.toggle("disabled", !hasCode);
     menu.querySelector('[data-act="open"]').classList.toggle("disabled", !hasFile);
@@ -2222,6 +2223,144 @@
         }
         vscode.postMessage({ command: "open_source", file: plot.srcFile, line1: plot.srcLine1, line2: plot.srcLine2 });
         break;
+      case "reprex": {
+        if (!code.trim()) return noCode();
+        const header = plot.srcFile ? `# Source: ${plot.srcFile}${plot.srcLine1 ? ":" + plot.srcLine1 : ""}` : "# R Plot Pro reproducible snippet";
+        const noteLines = plot.note ? "\n\n" + String(plot.note).split("\n").map((l) => "# " + l).join("\n") : "";
+        const snippet = `${header}
+${code}${noteLines}
+`;
+        navigator.clipboard.writeText(snippet).then(
+          () => vscode.postMessage({ command: "info", text: "Reproducible snippet copied to clipboard" }),
+          () => vscode.postMessage({ command: "info", text: "Copy failed: clipboard access required" })
+        );
+        break;
+      }
+      case "card":
+        exportPlotCard(index);
+        break;
+    }
+  }
+  async function exportPlotCard(index) {
+    const plot = plots[index];
+    if (!plot) return;
+    try {
+      const img = await new Promise((res, rej) => {
+        const im = new Image();
+        im.onload = () => res(im);
+        im.onerror = rej;
+        im.src = plot.data;
+      });
+      const pad = 24, gap = 16, lineH = 17, codeFont = "13px monospace";
+      const cardW = 760, innerW = cardW - pad * 2;
+      const nw = img.naturalWidth || 800, nh = img.naturalHeight || 600;
+      const imgW = innerW, imgH = Math.round(nh * (innerW / nw));
+      const codeLines = plot.code ? wrapMonoLines(String(plot.code), innerW, codeFont) : [];
+      const noteLines = plot.note ? wrapMonoLines(String(plot.note), innerW, "13px sans-serif") : [];
+      let y = pad;
+      const titleH = 26;
+      const codeBlockH = codeLines.length ? gap + codeLines.length * lineH + 16 : 0;
+      const noteH = noteLines.length ? gap + noteLines.length * lineH : 0;
+      const cardH = pad + titleH + gap + imgH + codeBlockH + noteH + pad;
+      const canvas = document.createElement("canvas");
+      canvas.width = cardW;
+      canvas.height = cardH;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, cardW, cardH);
+      ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = "#111";
+      ctx.font = "600 15px sans-serif";
+      ctx.fillText(`Plot ${index + 1}`, pad, y + 16);
+      ctx.fillStyle = "#888";
+      ctx.font = "12px sans-serif";
+      ctx.fillText(plot.timestamp || "", cardW - pad - ctx.measureText(plot.timestamp || "").width, y + 16);
+      y += titleH + gap;
+      ctx.drawImage(img, pad, y, imgW, imgH);
+      ctx.strokeStyle = "#e2e2e2";
+      ctx.strokeRect(pad, y, imgW, imgH);
+      y += imgH;
+      if (codeLines.length) {
+        y += gap;
+        ctx.fillStyle = "#f6f8fa";
+        ctx.fillRect(pad, y, innerW, codeLines.length * lineH + 16);
+        ctx.font = codeFont;
+        let cy = y + 8 + 12;
+        for (const line of codeLines) {
+          drawCodeLine(ctx, line, pad + 8, cy, codeFont);
+          cy += lineH;
+        }
+        y += codeLines.length * lineH + 16;
+      }
+      if (noteLines.length) {
+        y += gap;
+        ctx.fillStyle = "#444";
+        ctx.font = "13px sans-serif";
+        for (const line of noteLines) {
+          ctx.fillText(line, pad, y + 12);
+          y += lineH;
+        }
+      }
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          vscode.postMessage({ command: "info", text: "Plot card export failed" });
+          return;
+        }
+        const reader = new FileReader();
+        reader.onloadend = () => vscode.postMessage({ command: "save_data", data: reader.result, format: "png" });
+        reader.readAsDataURL(blob);
+      }, "image/png", 0.95);
+    } catch (e) {
+      log("Plot card export failed: " + e);
+      vscode.postMessage({ command: "info", text: "Plot card export failed" });
+    }
+  }
+  function wrapMonoLines(text, maxW, font) {
+    const probe = document.createElement("canvas").getContext("2d");
+    probe.font = font;
+    const out = [];
+    for (const raw of text.split("\n")) {
+      let line = "";
+      for (const word of raw.split(/(\s+)/)) {
+        if (probe.measureText(line + word).width <= maxW) {
+          line += word;
+          continue;
+        }
+        if (line) out.push(line);
+        if (probe.measureText(word).width <= maxW) {
+          line = word;
+          continue;
+        }
+        let chunk = "";
+        for (const ch of word) {
+          if (probe.measureText(chunk + ch).width <= maxW) chunk += ch;
+          else {
+            out.push(chunk);
+            chunk = ch;
+          }
+        }
+        line = chunk;
+      }
+      out.push(line);
+    }
+    return out;
+  }
+  function drawCodeLine(ctx, line, x, y, font) {
+    ctx.font = font;
+    const commentAt = line.indexOf("#");
+    const code = commentAt >= 0 ? line.slice(0, commentAt) : line;
+    const comment = commentAt >= 0 ? line.slice(commentAt) : "";
+    const parts = code.split(/("[^"]*"|'[^']*')/);
+    let cx = x;
+    for (const part of parts) {
+      if (!part) continue;
+      ctx.fillStyle = part[0] === '"' || part[0] === "'" ? "#0a7d33" : "#24292e";
+      ctx.fillText(part, cx, y);
+      cx += ctx.measureText(part).width;
+    }
+    if (comment) {
+      ctx.fillStyle = "#6a737d";
+      ctx.fillText(comment, cx, y);
     }
   }
   window.addEventListener("click", () => {
