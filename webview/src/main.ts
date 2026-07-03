@@ -1434,12 +1434,6 @@ function updateControls() {
     
     document.getElementById('exportBtn').disabled = !hasPlots;
     document.getElementById('copyBtn').disabled = !hasPlots;
-    // Copy-as-SVG only makes sense for a single vector plot.
-    const copySvgBtn = document.getElementById('copySvgBtn');
-    if (copySvgBtn) {
-        const cur = currentIndex >= 0 ? plots[currentIndex] : null;
-        copySvgBtn.disabled = !hasPlots || isSplitMode || !cur || cur.format !== 'svg';
-    }
     const codeBtn = document.getElementById('codeBtn');
     if (codeBtn) codeBtn.disabled = !hasPlots || isSplitMode;
     document.getElementById('newWindowBtn').disabled = !hasPlots;
@@ -1855,6 +1849,60 @@ function toggleCodeMenu(index, event) {
     menu.style.top = top + 'px';
 }
 
+// --- COPY MENU (toolbar dropdown: PNG raster vs SVG vector) ---
+let copyMenuEl = null;
+
+function buildCopyMenu() {
+    if (copyMenuEl) return copyMenuEl;
+    copyMenuEl = document.createElement('div');
+    copyMenuEl.className = 'code-menu';
+    copyMenuEl.style.display = 'none';
+    copyMenuEl.innerHTML =
+        '<div class="code-menu-item" data-act="png">Copy as PNG</div>' +
+        '<div class="code-menu-item" data-act="svg">Copy as SVG (vector)</div>';
+    copyMenuEl.addEventListener('click', (e) => {
+        const item = e.target.closest('.code-menu-item');
+        if (!item || item.classList.contains('disabled')) { e.stopPropagation(); return; }
+        e.stopPropagation();
+        const act = item.getAttribute('data-act');
+        hideCopyMenu();
+        if (act === 'svg') copySvgToClipboard();
+        else copyToClipboard();
+    });
+    document.body.appendChild(copyMenuEl);
+    return copyMenuEl;
+}
+
+function hideCopyMenu() {
+    if (copyMenuEl) copyMenuEl.style.display = 'none';
+}
+
+function toggleCopyMenu(event) {
+    if (event) event.stopPropagation();
+    if (currentIndex < 0 || plots.length === 0) return;
+    const menu = buildCopyMenu();
+    if (menu.style.display === 'block') { hideCopyMenu(); return; }
+
+    // SVG copy only applies to a single vector plot.
+    const cur = plots[currentIndex];
+    const canSvg = !isSplitMode && !!cur && cur.format === 'svg';
+    menu.querySelector('[data-act="svg"]').classList.toggle('disabled', !canSvg);
+
+    menu.style.display = 'block';
+    const rect = (event && event.currentTarget)
+        ? event.currentTarget.getBoundingClientRect()
+        : { left: 8, right: 8, top: 8, bottom: 8 };
+    const mw = menu.offsetWidth || 190;
+    const mh = menu.offsetHeight || 80;
+    let left = rect.left;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    if (left < 8) left = 8;
+    let top = rect.bottom + 4;
+    if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+}
+
 // Toolbar entry point: acts on the currently selected plot.
 function toggleCodeMenuToolbar(event) {
     if (event) event.stopPropagation();
@@ -1891,9 +1939,9 @@ function runCodeAction(act, index) {
 }
 
 // Dismiss the menu on any outside click, scroll or resize.
-window.addEventListener('click', () => hideCodeMenu());
-window.addEventListener('resize', () => hideCodeMenu());
-document.addEventListener('scroll', () => hideCodeMenu(), true);
+window.addEventListener('click', () => { hideCodeMenu(); hideCopyMenu(); });
+window.addEventListener('resize', () => { hideCodeMenu(); hideCopyMenu(); });
+document.addEventListener('scroll', () => { hideCodeMenu(); hideCopyMenu(); }, true);
 
 function toggleFavorite(index, event) {
     if (event) event.stopPropagation();
@@ -2924,6 +2972,7 @@ Object.assign(window as any, {
     confirmTextAnnotation,
     copyToClipboard,
     copySvgToClipboard,
+    toggleCopyMenu,
     openDiffView,
     closeDiffModal,
     computeDiff,
