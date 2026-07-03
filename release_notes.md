@@ -1,5 +1,20 @@
 # R Plot Pro - Release Notes
 
+## v0.50.0 - Interactive inspect: hover read-out, point snapping, measure and zoom
+
+### New
+- **Hover to inspect** - hover a static base-graphics plot to read the data coordinates under the cursor. The R server captures each plot's coordinate transform (axis limits, panel position, log scales) and the webview maps a pixel back to data space, with a crosshair and dashed axis-projection lines.
+- **Nearest-point snapping** - the server traces the actual plotted data points (via graphics::plot.xy) so hover snaps to the closest real point and shows its exact value, ringed to distinguish it from the free cursor.
+- **Measure tool** - click two points to get delta-x, delta-y and the distance in data units.
+- **Zoom to region** - drag a rectangle on the plot to generate an xlim/ylim command and type it into the R console.
+- **Grid / montage export** - combine several plots (favourites, or the gallery) into one grid PNG for reports.
+- **Plot card export** - composite a plot with its generating code (lightly syntax-coloured) and note into one shareable PNG.
+- **Copy reproducible snippet** - copy a self-contained block (source header + code + note) for issues or a reprex.
+- **Settings menu** - a toolbar gear to toggle hover-inspect and switch inspect tools.
+
+### Under the hood
+- The webview entry (main.ts) is type-checked in CI with the strict-family flags it already passes, catching more bugs at compile time.
+
 ## v0.49.0 - Diff view, code/plot linking, richer copy & theme-aware viewer
 
 ### New
