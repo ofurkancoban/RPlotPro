@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { dataAtPixel, formatInspectValue, panelPixelRect, PlotCoords } from './inspect';
+import { dataAtPixel, formatInspectValue, panelPixelRect, pixelAtData, nearestPoint, PlotCoords } from './inspect';
 
 // Panel fills the whole image (plt = 0..1), data range x:0..10, y:0..100.
 const full: PlotCoords = { usr: [0, 10, 0, 100], plt: [0, 1, 0, 1] };
@@ -51,6 +51,31 @@ suite('panelPixelRect', () => {
         near(r.right, 90);
         near(r.top, 20);   // (1 - 0.8) * 100
         near(r.bottom, 80); // (1 - 0.2) * 100
+    });
+});
+
+suite('pixelAtData / nearestPoint', () => {
+    test('pixelAtData is the inverse of dataAtPixel', () => {
+        const p = pixelAtData(5, 50, 100, 100, full)!; // centre of 0..10, 0..100
+        assert.strictEqual(p.px, 50);
+        assert.strictEqual(p.py, 50);
+        const back = dataAtPixel(p.px, p.py, 100, 100, full)!;
+        assert.strictEqual(back.x, 5);
+        assert.strictEqual(back.y, 50);
+    });
+
+    test('snaps to the nearest point within the pixel radius', () => {
+        const xs = [1, 5, 9], ys = [10, 50, 90];
+        // Cursor near the middle point (5,50) -> pixel (50,50).
+        const hit = nearestPoint(52, 48, xs, ys, 100, 100, full, 18)!;
+        assert.strictEqual(hit.index, 1);
+        assert.strictEqual(hit.x, 5);
+        assert.strictEqual(hit.y, 50);
+    });
+
+    test('returns null when no point is close enough', () => {
+        const xs = [1], ys = [10]; // pixel (10, 90)
+        assert.strictEqual(nearestPoint(50, 50, xs, ys, 100, 100, full, 18), null);
     });
 });
 

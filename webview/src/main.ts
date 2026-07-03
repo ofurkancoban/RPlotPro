@@ -558,7 +558,7 @@ function handleBinaryMessage(buffer, port) {
         if (metadata.type === 'new_plot') {
             addPlot(url, metadata, port);
         } else {
-            updateCurrentPlot(pid, url, port, metadata.coords);
+            updateCurrentPlot(pid, url, port, metadata.coords, metadata.points);
         }
     } catch (e) {
         log('CRITICAL ERROR: ' + e);
@@ -908,6 +908,7 @@ function addPlot(plotUrl, metadata: any = {}, port?) {
         srcLine1: metadata.srcLine1,
         srcLine2: metadata.srcLine2,
         coords: metadata.coords, // base-graphics transform for hover-to-inspect (may be undefined)
+        points: metadata.points, // plotted data points for hover-snapping (may be undefined)
         port: Number(port)
     };
     plots.push(plot);
@@ -918,13 +919,14 @@ function addPlot(plotUrl, metadata: any = {}, port?) {
     persistArchive();
 }
 
-function updateCurrentPlot(plotId, plotUrl, port, coords?) {
+function updateCurrentPlot(plotId, plotUrl, port, coords?, points?) {
     const pid = String(plotId);
     const index = plots.findIndex(p => String(p.id) === pid);
     if (index >= 0) {
         plots[index].data = plotUrl;
         if (port) plots[index].port = Number(port);
         if (coords !== undefined) plots[index].coords = coords;
+        if (points !== undefined) plots[index].points = points;
         
         if (!isSplitMode && index === currentIndex) {
             const plotImage = document.getElementById('plotImage');
@@ -1694,13 +1696,21 @@ function drawHoverInspect(plot, px, py, w, h) {
     const o = inspectOverlayCtx();
     if (!o) return;
     o.ctx.clearRect(0, 0, o.w, o.h);
-    const d = RPlotCore.dataAtPixel(px, py, w, h, plot.coords);
     const tip = ensureInspectTip();
+
+    // Snap to the nearest plotted data point when one is close; otherwise read out the
+    // free cursor coordinate.
+    let d = RPlotCore.dataAtPixel(px, py, w, h, plot.coords);
+    let snapPx = px, snapPy = py, snapped = false;
+    if (plot.points && plot.points.x && plot.points.y) {
+        const np = RPlotCore.nearestPoint(px, py, plot.points.x, plot.points.y, w, h, plot.coords, 16);
+        if (np) { d = { x: np.x, y: np.y }; snapPx = np.px; snapPy = np.py; snapped = true; }
+    }
     if (!d) { tip.style.display = 'none'; return; }
 
     // Scale image-space (w,h) to overlay pixels (may differ slightly).
     const sx = o.w / w, sy = o.h / h;
-    const ox = px * sx, oy = py * sy;
+    const ox = snapPx * sx, oy = snapPy * sy;
     const panel = RPlotCore.panelPixelRect(o.w, o.h, plot.coords);
     const bottom = panel ? panel.bottom : o.h;
     const left = panel ? panel.left : 0;
@@ -1713,10 +1723,17 @@ function drawHoverInspect(plot, px, py, w, h) {
     o.ctx.moveTo(ox, oy); o.ctx.lineTo(left, oy);
     o.ctx.stroke();
     o.ctx.setLineDash([]);
+    // Ring the snapped data point so it is clearly the exact value, not the free cursor.
+    if (snapped) {
+        o.ctx.fillStyle = 'rgba(255,64,129,0.95)';
+        o.ctx.beginPath(); o.ctx.arc(ox, oy, 4, 0, 7); o.ctx.fill();
+        o.ctx.strokeStyle = '#fff'; o.ctx.lineWidth = 1.5;
+        o.ctx.beginPath(); o.ctx.arc(ox, oy, 4, 0, 7); o.ctx.stroke();
+    }
     inspectLabel(o.ctx, RPlotCore.formatInspectValue(d.x), ox + 2, bottom - 3);
     inspectLabel(o.ctx, RPlotCore.formatInspectValue(d.y), left + 3, oy - 2);
 
-    tip.textContent = `x: ${RPlotCore.formatInspectValue(d.x)}    y: ${RPlotCore.formatInspectValue(d.y)}`;
+    tip.textContent = (snapped ? '● ' : '') + `x: ${RPlotCore.formatInspectValue(d.x)}    y: ${RPlotCore.formatInspectValue(d.y)}`;
     tip.style.display = 'block';
     tip.style.left = (px + document.getElementById('plotImage').getBoundingClientRect().left + 14) + 'px';
     tip.style.top = (py + document.getElementById('plotImage').getBoundingClientRect().top + 14) + 'px';
