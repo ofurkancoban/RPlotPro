@@ -1,5 +1,22 @@
 # R Plot Pro - Release Notes
 
+## v0.49.0 - Diff view, code/plot linking, richer copy & theme-aware viewer
+
+### New
+- **Pixel diff view** - a new Diff toolbar button overlays two plots and highlights the pixels that changed (magenta), so you can see exactly how a plot moved when you tweaked the code or parameters. Doubles as a quick regression check. Picks the pair from the Split View selection, or the current plot vs the previous one, with a sensitivity slider and a changed-pixel percentage.
+- **Reverse code to plot link** - moving the cursor in an R/Julia file now glows the gallery thumbnails whose captured source covers that line, the mirror of the existing plot to source jump.
+- **Copy as PNG or SVG** - the Copy button is now a dropdown: copy the plot as a PNG raster, or copy the raw SVG vector markup as text to paste into Illustrator, Inkscape or Figma (vector plots only).
+- **Keyboard shortcuts** - in the viewer: arrows for previous/next, `a` annotate, `e` export, `d` dark mode, `Esc` to leave annotation. Plus editor keybindings scoped to the view (alt+left/right, ctrl/cmd+alt+e, ctrl/cmd+alt+a).
+
+### Improved
+- **Theme-aware viewer** - the dark (inverted) plot mode now follows the VS Code color theme by default and live-updates when you switch themes; a manual toggle pins it for the session.
+- **Per-plot zoom** - each plot remembers its own zoom level instead of sharing one global setting.
+- **Annotation badges** - annotated plots show a marker in the gallery, and annotations remain baked into every export (PNG, SVG, PDF and clipboard).
+
+### Under the hood
+- **Webview migrated to TypeScript** - the ~2700-line webview script is now a bundled TypeScript entry that imports the typed, unit-tested core modules directly, and is type-checked in CI to catch a whole class of bugs at compile time.
+- **Fix** - the annotation tools (pencil/arrow/text) briefly broke after the bundle switch because of a strict-mode regression; fixed and guarded against recurrence.
+
 ## v0.48.0 - Remote, exports, gallery archive, code actions & reliable attach
 
 ### New
