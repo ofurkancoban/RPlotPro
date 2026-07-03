@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { dataAtPixel, formatInspectValue, PlotCoords } from './inspect';
+import { dataAtPixel, formatInspectValue, panelPixelRect, PlotCoords } from './inspect';
 
 // Panel fills the whole image (plt = 0..1), data range x:0..10, y:0..100.
 const full: PlotCoords = { usr: [0, 10, 0, 100], plt: [0, 1, 0, 1] };
@@ -35,6 +35,22 @@ suite('dataAtPixel', () => {
     test('returns null for missing coords or zero-size image', () => {
         assert.strictEqual(dataAtPixel(1, 1, 0, 100, full), null);
         assert.strictEqual(dataAtPixel(1, 1, 100, 100, undefined as any), null);
+    });
+});
+
+suite('panelPixelRect', () => {
+    test('full-panel plt covers the whole image', () => {
+        const r = panelPixelRect(200, 100, full)!;
+        assert.deepStrictEqual(r, { left: 0, right: 200, top: 0, bottom: 100 });
+    });
+    test('margins map to inset pixels with an inverted top/bottom', () => {
+        const c: PlotCoords = { usr: [0, 1, 0, 1], plt: [0.1, 0.9, 0.2, 0.8] };
+        const r = panelPixelRect(100, 100, c)!;
+        const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
+        near(r.left, 10);
+        near(r.right, 90);
+        near(r.top, 20);   // (1 - 0.8) * 100
+        near(r.bottom, 80); // (1 - 0.2) * 100
     });
 });
 
