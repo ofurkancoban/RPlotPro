@@ -14,5 +14,5 @@ export { sniffImageMime } from './format';
 export type { ImageMime } from './format';
 export { diffPixels } from './diff';
 export type { DiffOptions, DiffResult } from './diff';
-export { dataAtPixel, formatInspectValue, panelPixelRect } from './inspect';
+export { dataAtPixel, formatInspectValue, panelPixelRect, pixelAtData, nearestPoint } from './inspect';
 export type { PlotCoords } from './inspect';

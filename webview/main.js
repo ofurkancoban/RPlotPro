@@ -292,6 +292,34 @@
     if (c.ylog) y = Math.pow(10, y);
     return { x, y };
   }
+  function pixelAtData(x, y, w, h, c) {
+    if (!c || !c.usr || !c.plt || w <= 0 || h <= 0) return null;
+    const ux = c.xlog ? Math.log10(x) : x;
+    const uy = c.ylog ? Math.log10(y) : y;
+    const [x1, x2, y1, y2] = c.usr;
+    const [l, r, b, t] = c.plt;
+    const fx = l + (ux - x1) / (x2 - x1) * (r - l);
+    const fyBottom = b + (uy - y1) / (y2 - y1) * (t - b);
+    return { px: fx * w, py: (1 - fyBottom) * h };
+  }
+  function nearestPoint(px, py, xs, ys, w, h, c, maxDistPx = 18) {
+    if (!c || !xs || !ys) return null;
+    const n = Math.min(xs.length, ys.length);
+    let best = -1, bestD = maxDistPx * maxDistPx, bpx = 0, bpy = 0;
+    for (let i = 0; i < n; i++) {
+      const p = pixelAtData(xs[i], ys[i], w, h, c);
+      if (!p) continue;
+      const dx = p.px - px, dy = p.py - py, d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+        bpx = p.px;
+        bpy = p.py;
+      }
+    }
+    if (best < 0) return null;
+    return { index: best, x: xs[best], y: ys[best], px: bpx, py: bpy };
+  }
   function panelPixelRect(w, h, c) {
     if (!c || !c.plt || w <= 0 || h <= 0) return null;
     const [l, r, b, t] = c.plt;
@@ -766,7 +794,7 @@
       if (metadata.type === "new_plot") {
         addPlot(url, metadata, port);
       } else {
-        updateCurrentPlot(pid, url, port, metadata.coords);
+        updateCurrentPlot(pid, url, port, metadata.coords, metadata.points);
       }
     } catch (e) {
       log("CRITICAL ERROR: " + e);
@@ -1060,6 +1088,8 @@
       srcLine2: metadata.srcLine2,
       coords: metadata.coords,
       // base-graphics transform for hover-to-inspect (may be undefined)
+      points: metadata.points,
+      // plotted data points for hover-snapping (may be undefined)
       port: Number(port)
     };
     plots.push(plot);
@@ -1068,13 +1098,14 @@
     showPlot(currentIndex, true);
     persistArchive();
   }
-  function updateCurrentPlot(plotId, plotUrl, port, coords) {
+  function updateCurrentPlot(plotId, plotUrl, port, coords, points) {
     const pid = String(plotId);
     const index = plots.findIndex((p) => String(p.id) === pid);
     if (index >= 0) {
       plots[index].data = plotUrl;
       if (port) plots[index].port = Number(port);
       if (coords !== void 0) plots[index].coords = coords;
+      if (points !== void 0) plots[index].points = points;
       if (!isSplitMode && index === currentIndex) {
         const plotImage2 = document.getElementById("plotImage");
         const wrapper = document.getElementById("mainMediaWrapper");
@@ -1700,14 +1731,24 @@
     const o = inspectOverlayCtx();
     if (!o) return;
     o.ctx.clearRect(0, 0, o.w, o.h);
-    const d = dataAtPixel(px, py, w, h, plot.coords);
     const tip = ensureInspectTip();
+    let d = dataAtPixel(px, py, w, h, plot.coords);
+    let snapPx = px, snapPy = py, snapped = false;
+    if (plot.points && plot.points.x && plot.points.y) {
+      const np = nearestPoint(px, py, plot.points.x, plot.points.y, w, h, plot.coords, 16);
+      if (np) {
+        d = { x: np.x, y: np.y };
+        snapPx = np.px;
+        snapPy = np.py;
+        snapped = true;
+      }
+    }
     if (!d) {
       tip.style.display = "none";
       return;
     }
     const sx = o.w / w, sy = o.h / h;
-    const ox = px * sx, oy = py * sy;
+    const ox = snapPx * sx, oy = snapPy * sy;
     const panel = panelPixelRect(o.w, o.h, plot.coords);
     const bottom = panel ? panel.bottom : o.h;
     const left = panel ? panel.left : 0;
@@ -1721,9 +1762,20 @@
     o.ctx.lineTo(left, oy);
     o.ctx.stroke();
     o.ctx.setLineDash([]);
+    if (snapped) {
+      o.ctx.fillStyle = "rgba(255,64,129,0.95)";
+      o.ctx.beginPath();
+      o.ctx.arc(ox, oy, 4, 0, 7);
+      o.ctx.fill();
+      o.ctx.strokeStyle = "#fff";
+      o.ctx.lineWidth = 1.5;
+      o.ctx.beginPath();
+      o.ctx.arc(ox, oy, 4, 0, 7);
+      o.ctx.stroke();
+    }
     inspectLabel(o.ctx, formatInspectValue(d.x), ox + 2, bottom - 3);
     inspectLabel(o.ctx, formatInspectValue(d.y), left + 3, oy - 2);
-    tip.textContent = `x: ${formatInspectValue(d.x)}    y: ${formatInspectValue(d.y)}`;
+    tip.textContent = (snapped ? "\u25CF " : "") + `x: ${formatInspectValue(d.x)}    y: ${formatInspectValue(d.y)}`;
     tip.style.display = "block";
     tip.style.left = px + document.getElementById("plotImage").getBoundingClientRect().left + 14 + "px";
     tip.style.top = py + document.getElementById("plotImage").getBoundingClientRect().top + 14 + "px";

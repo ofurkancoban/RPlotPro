@@ -82,6 +82,12 @@ local(
         # panel position), captured after replay so the webview can map a hovered pixel
         # back to data coordinates. NULL for grid/ggplot/lattice plots.
         last_coords <- NULL
+        # Data points drawn on the current frame (accumulated from graphics::plot.xy in
+        # user coordinates), so the webview can snap hover-inspect to the nearest point.
+        # Reset on each new frame; capped to keep the payload small.
+        pending_x <- numeric(0)
+        pending_y <- numeric(0)
+        POINTS_CAP <- 5000
         
         # Debug logging. Use a cross-platform temp path (tempdir()) instead of a
         # hardcoded "/tmp", which does not exist on Windows, and swallow warnings
@@ -235,6 +241,12 @@ local(
             if (!is.na(last_expr_line1)) m$srcLine1 <- last_expr_line1
             if (!is.na(last_expr_line2)) m$srcLine2 <- last_expr_line2
             if (!is.null(last_coords)) m$coords <- last_coords
+            # Attach plotted points for hover-snapping, only for base plots with a valid
+            # coordinate system and a manageable number of points.
+            if (!is.null(last_coords) && length(pending_x) > 0 && length(pending_x) <= POINTS_CAP) {
+                keep <- is.finite(pending_x) & is.finite(pending_y)
+                if (any(keep)) m$points <- list(x = pending_x[keep], y = pending_y[keep])
+            }
             m
         }
 
@@ -318,7 +330,26 @@ local(
 
         # Called by trace("plot.new") - just sets the flag, no capture.
         # This tells source_capture / check_for_new_plot that a new frame opened.
-        .vsc_rplot$on_plot_new <- function() { plot_new_called <<- TRUE }
+        # A new frame also starts a fresh point buffer for hover-snapping.
+        .vsc_rplot$on_plot_new <- function() {
+            plot_new_called <<- TRUE
+            pending_x <<- numeric(0)
+            pending_y <<- numeric(0)
+        }
+
+        # Called by trace("plot.xy") - accumulate the plotted data points (user coords).
+        .vsc_rplot$on_plot_xy <- function(xy) {
+            tryCatch({
+                if (length(pending_x) >= POINTS_CAP) return(invisible())
+                x <- suppressWarnings(as.numeric(xy$x))
+                y <- suppressWarnings(as.numeric(xy$y))
+                n <- min(length(x), length(y))
+                if (n > 0) {
+                    pending_x <<- c(pending_x, x[seq_len(n)])
+                    pending_y <<- c(pending_y, y[seq_len(n)])
+                }
+            }, error = function(e) NULL)
+        }
 
         # Legacy entry point kept for safety (no longer used by any tracer).
         .vsc_rplot$safe_capture_batch <- function() {
@@ -472,6 +503,18 @@ local(
                     })
                     hook_registered <<- TRUE
                 }, error = function(e) { log_debug(paste("plot.new trace failed:", e$message)) })
+
+                tryCatch({
+                    # Capture plotted data points (all base scatter/line drawing funnels
+                    # through plot.xy) for hover-snapping. Tracer runs in plot.xy's frame,
+                    # so 'xy' (list with x,y in user coords) is in scope.
+                    suppressMessages({
+                        trace("plot.xy",
+                              tracer = quote(.vsc_rplot$on_plot_xy(xy)),
+                              print = FALSE,
+                              where = asNamespace("graphics"))
+                    })
+                }, error = function(e) { log_debug(paste("plot.xy trace failed:", e$message)) })
 
                 tryCatch({
                     if (requireNamespace("ggplot2", quietly = TRUE)) {
