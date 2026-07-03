@@ -228,6 +228,36 @@
     return mime;
   }
 
+  // webview/src/diff.ts
+  function diffPixels(a, b, opts = {}) {
+    const threshold = opts.threshold ?? 0;
+    const hi = opts.highlight ?? [255, 0, 255];
+    const fade = opts.fade ?? 0.2;
+    const len = Math.min(a.length, b.length);
+    const out = new Uint8ClampedArray(len);
+    let changed = 0;
+    for (let i = 0; i < len; i += 4) {
+      const dr = Math.abs(a[i] - b[i]);
+      const dg = Math.abs(a[i + 1] - b[i + 1]);
+      const db = Math.abs(a[i + 2] - b[i + 2]);
+      if (dr > threshold || dg > threshold || db > threshold) {
+        out[i] = hi[0];
+        out[i + 1] = hi[1];
+        out[i + 2] = hi[2];
+        out[i + 3] = 255;
+        changed++;
+      } else {
+        const gray = 0.299 * a[i] + 0.587 * a[i + 1] + 0.114 * a[i + 2];
+        const v = 255 - (255 - gray) * fade;
+        out[i] = v;
+        out[i + 1] = v;
+        out[i + 2] = v;
+        out[i + 3] = 255;
+      }
+    }
+    return { out, changed, total: Math.floor(len / 4) };
+  }
+
   // webview/src/main.ts
   var vscode = acquireVsCodeApi();
   var plots = [];
@@ -1409,6 +1439,8 @@
       splitBtn.disabled = !canSplit;
       splitBtn.classList.toggle("split-active-btn", isSplitMode);
     }
+    const diffBtn = document.getElementById("diffBtn");
+    if (diffBtn) diffBtn.disabled = !canSplit;
     document.getElementById("plotInfo").textContent = isSplitMode ? "SPLIT" : hasPlots ? `${currentIndex + 1} / ${plots.length}` : "";
   }
   function previousPlot() {
@@ -1498,6 +1530,75 @@
     } catch (err) {
       log("Copy as SVG failed: " + err);
       vscode.postMessage({ command: "info", text: "Copy as SVG failed: clipboard access required" });
+    }
+  }
+  var diffA = -1;
+  var diffB = -1;
+  function openDiffView() {
+    let a = -1, b = -1;
+    if (isSplitMode && leftIndex >= 0 && rightIndex >= 0) {
+      a = leftIndex;
+      b = rightIndex;
+    } else if (currentIndex >= 1) {
+      a = currentIndex - 1;
+      b = currentIndex;
+    }
+    if (a < 0 || b < 0 || !plots[a] || !plots[b]) {
+      vscode.postMessage({ command: "info", text: "Diff needs two plots (pick two in Split View, or view a plot after the first)" });
+      return;
+    }
+    diffA = a;
+    diffB = b;
+    document.getElementById("diffModal").classList.add("show");
+    computeDiff();
+  }
+  function closeDiffModal() {
+    document.getElementById("diffModal").classList.remove("show");
+    diffA = -1;
+    diffB = -1;
+  }
+  async function computeDiff() {
+    if (diffA < 0 || diffB < 0) return;
+    const stats = document.getElementById("diffStats");
+    const canvas = document.getElementById("diffCanvas");
+    if (!canvas) return;
+    try {
+      const load = (url) => new Promise((res, rej) => {
+        const img = new Image();
+        img.onload = () => res(img);
+        img.onerror = rej;
+        img.src = url;
+      });
+      const [imgA, imgB] = await Promise.all([load(plots[diffA].data), load(plots[diffB].data)]);
+      const w = imgA.naturalWidth || 800;
+      const h = imgA.naturalHeight || 600;
+      const mk = (img) => {
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        const x = c.getContext("2d");
+        x.fillStyle = "white";
+        x.fillRect(0, 0, w, h);
+        x.drawImage(img, 0, 0, w, h);
+        return x.getImageData(0, 0, w, h);
+      };
+      const da = mk(imgA), db = mk(imgB);
+      const thrEl = document.getElementById("diffThreshold");
+      const threshold = thrEl ? Number(thrEl.value) || 0 : 16;
+      const r = diffPixels(da.data, db.data, { threshold });
+      canvas.width = w;
+      canvas.height = h;
+      const outCtx = canvas.getContext("2d");
+      const outImage = outCtx.createImageData(w, h);
+      outImage.data.set(r.out);
+      outCtx.putImageData(outImage, 0, 0);
+      const pct = r.total ? 100 * r.changed / r.total : 0;
+      if (stats) {
+        stats.textContent = `Plot ${diffA + 1} vs Plot ${diffB + 1}: ${r.changed.toLocaleString()} of ${r.total.toLocaleString()} pixels changed (${pct.toFixed(2)}%)`;
+      }
+    } catch (e) {
+      log("Diff failed: " + e);
+      if (stats) stats.textContent = "Diff failed: could not rasterise one of the plots";
     }
   }
   function refreshLayout() {
@@ -2536,6 +2637,9 @@
     confirmTextAnnotation,
     copyToClipboard,
     copySvgToClipboard,
+    openDiffView,
+    closeDiffModal,
+    computeDiff,
     deletePlot,
     exportPlot,
     focusPane,

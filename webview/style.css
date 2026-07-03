@@ -550,6 +550,42 @@ button.icon-btn svg[fill="currentColor"] {
     color: var(--text-primary);
 }
 
+/* Pixel diff modal: wider than the text/note dialogs and holds a scaled canvas. */
+.modal-content-wide {
+    max-width: 90vw;
+    width: auto;
+}
+.diff-stats {
+    font-size: 12px;
+    color: var(--text-primary);
+    opacity: 0.85;
+    margin-bottom: 10px;
+}
+.diff-canvas-wrap {
+    max-width: 84vw;
+    max-height: 66vh;
+    overflow: auto;
+    background: repeating-conic-gradient(#808080 0% 25%, #a0a0a0 0% 50%) 50% / 16px 16px;
+    border: 1px solid var(--border-color);
+}
+.diff-canvas-wrap canvas {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}
+.diff-actions {
+    align-items: center;
+    gap: 14px;
+}
+.diff-threshold {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-primary);
+    margin-right: auto;
+}
+
 .modal-textarea {
     width: 100%;
     min-height: 100px;
