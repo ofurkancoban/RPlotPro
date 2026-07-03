@@ -409,6 +409,7 @@
   }
   var darkModeUserSet = typeof state.darkMode === "boolean";
   var isDarkMode = darkModeUserSet ? state.darkMode : detectVsCodeDark();
+  var hoverInspectEnabled = state.hoverInspect !== false;
   var lastCanvasData = /* @__PURE__ */ new Map();
   var plotZoom = state.plotZoom ? new Map(Object.entries(state.plotZoom)) : /* @__PURE__ */ new Map();
   var isAnnotating = false;
@@ -1638,10 +1639,13 @@
     const tip = ensureInspectTip();
     img.addEventListener("mousemove", (e) => {
       const plot = currentIndex >= 0 ? plots[currentIndex] : null;
-      if (isAnnotating || isSplitMode || !plot || !plot.coords) {
+      const active = hoverInspectEnabled && !isAnnotating && !isSplitMode && plot && plot.coords;
+      if (!active) {
         tip.style.display = "none";
+        img.style.cursor = "";
         return;
       }
+      img.style.cursor = "crosshair";
       const rect = img.getBoundingClientRect();
       const d = dataAtPixel(e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, plot.coords);
       if (!d) {
@@ -1655,6 +1659,7 @@
     });
     img.addEventListener("mouseleave", () => {
       tip.style.display = "none";
+      img.style.cursor = "";
     });
   }
   function refreshLayout() {
@@ -1881,6 +1886,58 @@
     menu.style.left = left + "px";
     menu.style.top = top + "px";
   }
+  var settingsMenuEl = null;
+  function buildSettingsMenu() {
+    if (settingsMenuEl) return settingsMenuEl;
+    settingsMenuEl = document.createElement("div");
+    settingsMenuEl.className = "code-menu";
+    settingsMenuEl.style.display = "none";
+    settingsMenuEl.innerHTML = '<div class="code-menu-item" data-act="toggle-inspect"></div>';
+    settingsMenuEl.addEventListener("click", (e) => {
+      const item = e.target.closest(".code-menu-item");
+      if (!item) {
+        e.stopPropagation();
+        return;
+      }
+      e.stopPropagation();
+      if (item.getAttribute("data-act") === "toggle-inspect") {
+        hoverInspectEnabled = !hoverInspectEnabled;
+        vscode.setState({ ...vscode.getState(), hoverInspect: hoverInspectEnabled });
+        if (!hoverInspectEnabled && inspectTipEl) inspectTipEl.style.display = "none";
+        updateSettingsMenu();
+      }
+    });
+    document.body.appendChild(settingsMenuEl);
+    return settingsMenuEl;
+  }
+  function updateSettingsMenu() {
+    if (!settingsMenuEl) return;
+    const item = settingsMenuEl.querySelector('[data-act="toggle-inspect"]');
+    if (item) item.textContent = (hoverInspectEnabled ? "\u2713 " : "\u2003 ") + "Hover to inspect";
+  }
+  function hideSettingsMenu() {
+    if (settingsMenuEl) settingsMenuEl.style.display = "none";
+  }
+  function toggleSettingsMenu(event) {
+    if (event) event.stopPropagation();
+    const menu = buildSettingsMenu();
+    if (menu.style.display === "block") {
+      hideSettingsMenu();
+      return;
+    }
+    updateSettingsMenu();
+    menu.style.display = "block";
+    const rect = event && event.currentTarget ? event.currentTarget.getBoundingClientRect() : { left: 8, right: 8, top: 8, bottom: 8 };
+    const mw = menu.offsetWidth || 190;
+    const mh = menu.offsetHeight || 44;
+    let left = rect.right - mw;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    if (left < 8) left = 8;
+    let top = rect.bottom + 4;
+    if (top + mh > window.innerHeight - 8) top = rect.top - mh - 4;
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+  }
   function toggleCodeMenuToolbar(event) {
     if (event) event.stopPropagation();
     if (currentIndex < 0 || currentIndex >= plots.length) return;
@@ -1919,14 +1976,17 @@
   window.addEventListener("click", () => {
     hideCodeMenu();
     hideCopyMenu();
+    hideSettingsMenu();
   });
   window.addEventListener("resize", () => {
     hideCodeMenu();
     hideCopyMenu();
+    hideSettingsMenu();
   });
   document.addEventListener("scroll", () => {
     hideCodeMenu();
     hideCopyMenu();
+    hideSettingsMenu();
   }, true);
   function toggleFavorite(index, event) {
     if (event) event.stopPropagation();
@@ -2752,6 +2812,7 @@
     copyToClipboard,
     copySvgToClipboard,
     toggleCopyMenu,
+    toggleSettingsMenu,
     openDiffView,
     closeDiffModal,
     computeDiff,
