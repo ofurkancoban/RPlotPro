@@ -35,6 +35,20 @@ export function dataAtPixel(
     return { x, y };
 }
 
+// Pixel bounds of the plotting panel (inside the axis margins), from par("plt").
+// Used to draw axis-projection lines and to clamp region selection to the panel.
+export function panelPixelRect(w: number, h: number, c: PlotCoords):
+    { left: number; right: number; top: number; bottom: number } | null {
+    if (!c || !c.plt || w <= 0 || h <= 0) return null;
+    const [l, r, b, t] = c.plt;
+    return {
+        left: l * w,
+        right: r * w,
+        top: (1 - t) * h,    // plt top is a fraction from the bottom; pixels grow downward
+        bottom: (1 - b) * h
+    };
+}
+
 // Compact, human-readable formatting for a hovered value.
 export function formatInspectValue(v: number): string {
     if (!isFinite(v)) return String(v);

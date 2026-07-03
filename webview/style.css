@@ -276,6 +276,24 @@ button.icon-btn svg[fill="currentColor"] {
     border-top: 3px solid var(--accent);
 }
 
+/* Inspect overlay: crosshair / axis projection / measure / crop drawing surface. */
+.inspect-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 4;
+}
+
+/* Separator inside dropdown menus. */
+.code-menu-sep {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--vscode-menu-separatorBackground, var(--border-color));
+}
+
 /* Hover-to-inspect readout: follows the cursor over the static plot. */
 .inspect-tip {
     position: fixed;

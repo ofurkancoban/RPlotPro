@@ -274,6 +274,17 @@
     if (c.ylog) y = Math.pow(10, y);
     return { x, y };
   }
+  function panelPixelRect(w, h, c) {
+    if (!c || !c.plt || w <= 0 || h <= 0) return null;
+    const [l, r, b, t] = c.plt;
+    return {
+      left: l * w,
+      right: r * w,
+      top: (1 - t) * h,
+      // plt top is a fraction from the bottom; pixels grow downward
+      bottom: (1 - b) * h
+    };
+  }
   function formatInspectValue(v) {
     if (!isFinite(v)) return String(v);
     const a = Math.abs(v);
@@ -1624,6 +1635,9 @@
     }
   }
   var inspectTipEl = null;
+  var inspectMode = "hover";
+  var measurePts = [];
+  var cropStart = null;
   function ensureInspectTip() {
     if (inspectTipEl) return inspectTipEl;
     inspectTipEl = document.createElement("div");
@@ -1632,35 +1646,190 @@
     document.body.appendChild(inspectTipEl);
     return inspectTipEl;
   }
+  function inspectActivePlot() {
+    const plot = currentIndex >= 0 ? plots[currentIndex] : null;
+    if (!hoverInspectEnabled || isAnnotating || isSplitMode || !plot || !plot.coords) return null;
+    return plot;
+  }
+  function inspectOverlayCtx() {
+    const img = document.getElementById("plotImage");
+    const overlay = document.getElementById("inspectOverlay");
+    if (!img || !overlay) return null;
+    const w = img.clientWidth, h = img.clientHeight;
+    if (overlay.width !== w || overlay.height !== h) {
+      overlay.width = w;
+      overlay.height = h;
+    }
+    return { ctx: overlay.getContext("2d"), w, h, img };
+  }
+  function clearInspectOverlay() {
+    const o = inspectOverlayCtx();
+    if (o) o.ctx.clearRect(0, 0, o.w, o.h);
+  }
+  function inspectLabel(ctx, text, x, y) {
+    ctx.font = "11px monospace";
+    const pad = 3, tw = ctx.measureText(text).width;
+    ctx.fillStyle = "rgba(0,0,0,0.72)";
+    ctx.fillRect(x, y - 12, tw + pad * 2, 15);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(text, x + pad, y);
+  }
+  function pixelInImage(e, img) {
+    const rect = img.getBoundingClientRect();
+    return { px: e.clientX - rect.left, py: e.clientY - rect.top, w: rect.width, h: rect.height };
+  }
+  function drawHoverInspect(plot, px, py, w, h) {
+    const o = inspectOverlayCtx();
+    if (!o) return;
+    o.ctx.clearRect(0, 0, o.w, o.h);
+    const d = dataAtPixel(px, py, w, h, plot.coords);
+    const tip = ensureInspectTip();
+    if (!d) {
+      tip.style.display = "none";
+      return;
+    }
+    const sx = o.w / w, sy = o.h / h;
+    const ox = px * sx, oy = py * sy;
+    const panel = panelPixelRect(o.w, o.h, plot.coords);
+    const bottom = panel ? panel.bottom : o.h;
+    const left = panel ? panel.left : 0;
+    o.ctx.strokeStyle = "rgba(255,64,129,0.9)";
+    o.ctx.lineWidth = 1;
+    o.ctx.setLineDash([4, 3]);
+    o.ctx.beginPath();
+    o.ctx.moveTo(ox, oy);
+    o.ctx.lineTo(ox, bottom);
+    o.ctx.moveTo(ox, oy);
+    o.ctx.lineTo(left, oy);
+    o.ctx.stroke();
+    o.ctx.setLineDash([]);
+    inspectLabel(o.ctx, formatInspectValue(d.x), ox + 2, bottom - 3);
+    inspectLabel(o.ctx, formatInspectValue(d.y), left + 3, oy - 2);
+    tip.textContent = `x: ${formatInspectValue(d.x)}    y: ${formatInspectValue(d.y)}`;
+    tip.style.display = "block";
+    tip.style.left = px + document.getElementById("plotImage").getBoundingClientRect().left + 14 + "px";
+    tip.style.top = py + document.getElementById("plotImage").getBoundingClientRect().top + 14 + "px";
+  }
+  function drawMeasure(plot, curPx, curPy, w, h) {
+    const o = inspectOverlayCtx();
+    if (!o) return;
+    o.ctx.clearRect(0, 0, o.w, o.h);
+    const sx = o.w / w, sy = o.h / h;
+    const tip = ensureInspectTip();
+    const pts = measurePts.slice();
+    const live = pts.length === 1 ? { px: curPx, py: curPy } : null;
+    const a = pts[0], b = pts[1] || live;
+    o.ctx.fillStyle = o.ctx.strokeStyle = "rgba(255,64,129,0.95)";
+    for (const p of pts) {
+      o.ctx.beginPath();
+      o.ctx.arc(p.px * sx, p.py * sy, 3, 0, 7);
+      o.ctx.fill();
+    }
+    if (a && b) {
+      o.ctx.lineWidth = 1.5;
+      o.ctx.beginPath();
+      o.ctx.moveTo(a.px * sx, a.py * sy);
+      o.ctx.lineTo(b.px * sx, b.py * sy);
+      o.ctx.stroke();
+      const da = dataAtPixel(a.px, a.py, w, h, plot.coords);
+      const db = dataAtPixel(b.px, b.py, w, h, plot.coords);
+      if (da && db) {
+        const dx = db.x - da.x, dy = db.y - da.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const txt = `\u0394x: ${formatInspectValue(dx)}   \u0394y: ${formatInspectValue(dy)}   |d|: ${formatInspectValue(dist)}`;
+        inspectLabel(o.ctx, txt, Math.min(a.px, b.px) * sx, Math.min(a.py, b.py) * sy - 4);
+        tip.style.display = "none";
+      }
+    }
+  }
+  function drawCrop(curPx, curPy, w, h) {
+    const o = inspectOverlayCtx();
+    if (!o || !cropStart) return;
+    o.ctx.clearRect(0, 0, o.w, o.h);
+    const sx = o.w / w, sy = o.h / h;
+    const x = cropStart.px * sx, y = cropStart.py * sy;
+    const cw = (curPx - cropStart.px) * sx, ch = (curPy - cropStart.py) * sy;
+    o.ctx.strokeStyle = "rgba(30,144,255,0.95)";
+    o.ctx.fillStyle = "rgba(30,144,255,0.12)";
+    o.ctx.lineWidth = 1;
+    o.ctx.fillRect(x, y, cw, ch);
+    o.ctx.strokeRect(x, y, cw, ch);
+  }
+  function zoomNumber(v) {
+    return String(Number(v.toPrecision(6)));
+  }
+  function commitCrop(plot, endPx, endPy, w, h) {
+    const p0 = dataAtPixel(cropStart.px, cropStart.py, w, h, plot.coords);
+    const p1 = dataAtPixel(endPx, endPy, w, h, plot.coords);
+    cropStart = null;
+    clearInspectOverlay();
+    if (!p0 || !p1) return;
+    if (Math.abs(p1.x - p0.x) < 1e-12 || Math.abs(p1.y - p0.y) < 1e-12) return;
+    const xlim = [Math.min(p0.x, p1.x), Math.max(p0.x, p1.x)];
+    const ylim = [Math.min(p0.y, p1.y), Math.max(p0.y, p1.y)];
+    const cmd = `xlim <- c(${zoomNumber(xlim[0])}, ${zoomNumber(xlim[1])}); ylim <- c(${zoomNumber(ylim[0])}, ${zoomNumber(ylim[1])})  # R Plot Pro zoom region`;
+    vscode.postMessage({ command: "reveal_code", code: cmd });
+    vscode.postMessage({ command: "info", text: "Zoom limits sent to the R console" });
+  }
   function initHoverInspect() {
     const img = document.getElementById("plotImage");
     if (!img || img.hasInspectListener) return;
     img.hasInspectListener = true;
-    const tip = ensureInspectTip();
+    ensureInspectTip();
     img.addEventListener("mousemove", (e) => {
-      const plot = currentIndex >= 0 ? plots[currentIndex] : null;
-      const active = hoverInspectEnabled && !isAnnotating && !isSplitMode && plot && plot.coords;
-      if (!active) {
-        tip.style.display = "none";
+      const plot = inspectActivePlot();
+      if (!plot) {
+        ensureInspectTip().style.display = "none";
         img.style.cursor = "";
+        clearInspectOverlay();
         return;
       }
       img.style.cursor = "crosshair";
-      const rect = img.getBoundingClientRect();
-      const d = dataAtPixel(e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, plot.coords);
-      if (!d) {
-        tip.style.display = "none";
-        return;
-      }
-      tip.textContent = `x: ${formatInspectValue(d.x)}    y: ${formatInspectValue(d.y)}`;
-      tip.style.display = "block";
-      tip.style.left = e.clientX + 14 + "px";
-      tip.style.top = e.clientY + 14 + "px";
+      const { px, py, w, h } = pixelInImage(e, img);
+      if (inspectMode === "measure") drawMeasure(plot, px, py, w, h);
+      else if (inspectMode === "crop") {
+        if (cropStart) drawCrop(px, py, w, h);
+      } else drawHoverInspect(plot, px, py, w, h);
     });
     img.addEventListener("mouseleave", () => {
-      tip.style.display = "none";
+      ensureInspectTip().style.display = "none";
       img.style.cursor = "";
+      if (inspectMode === "hover") clearInspectOverlay();
     });
+    img.addEventListener("click", (e) => {
+      const plot = inspectActivePlot();
+      if (!plot || inspectMode !== "measure") return;
+      const { px, py, w, h } = pixelInImage(e, img);
+      const d = dataAtPixel(px, py, w, h, plot.coords);
+      if (!d) return;
+      if (measurePts.length >= 2) measurePts = [];
+      measurePts.push({ px, py, x: d.x, y: d.y });
+      drawMeasure(plot, px, py, w, h);
+    });
+    img.addEventListener("mousedown", (e) => {
+      const plot = inspectActivePlot();
+      if (!plot || inspectMode !== "crop") return;
+      const { px, py } = pixelInImage(e, img);
+      cropStart = { px, py };
+      e.preventDefault();
+    });
+    window.addEventListener("mouseup", (e) => {
+      if (inspectMode !== "crop" || !cropStart) return;
+      const plot = inspectActivePlot();
+      const { px, py, w, h } = pixelInImage(e, img);
+      if (plot) commitCrop(plot, px, py, w, h);
+      else {
+        cropStart = null;
+        clearInspectOverlay();
+      }
+    });
+  }
+  function setInspectMode(mode) {
+    inspectMode = mode;
+    measurePts = [];
+    cropStart = null;
+    clearInspectOverlay();
+    ensureInspectTip().style.display = "none";
   }
   function refreshLayout() {
     const w = window.innerWidth;
@@ -1892,28 +2061,43 @@
     settingsMenuEl = document.createElement("div");
     settingsMenuEl.className = "code-menu";
     settingsMenuEl.style.display = "none";
-    settingsMenuEl.innerHTML = '<div class="code-menu-item" data-act="toggle-inspect"></div>';
+    settingsMenuEl.innerHTML = '<div class="code-menu-item" data-act="toggle-inspect"></div><div class="code-menu-sep"></div><div class="code-menu-item" data-act="mode-hover"></div><div class="code-menu-item" data-act="mode-measure"></div><div class="code-menu-item" data-act="mode-crop"></div>';
     settingsMenuEl.addEventListener("click", (e) => {
       const item = e.target.closest(".code-menu-item");
-      if (!item) {
+      if (!item || item.classList.contains("disabled")) {
         e.stopPropagation();
         return;
       }
       e.stopPropagation();
-      if (item.getAttribute("data-act") === "toggle-inspect") {
+      const act = item.getAttribute("data-act");
+      if (act === "toggle-inspect") {
         hoverInspectEnabled = !hoverInspectEnabled;
         vscode.setState({ ...vscode.getState(), hoverInspect: hoverInspectEnabled });
-        if (!hoverInspectEnabled && inspectTipEl) inspectTipEl.style.display = "none";
-        updateSettingsMenu();
-      }
+        if (!hoverInspectEnabled) {
+          if (inspectTipEl) inspectTipEl.style.display = "none";
+          clearInspectOverlay();
+        }
+      } else if (act === "mode-hover") setInspectMode("hover");
+      else if (act === "mode-measure") setInspectMode("measure");
+      else if (act === "mode-crop") setInspectMode("crop");
+      updateSettingsMenu();
     });
     document.body.appendChild(settingsMenuEl);
     return settingsMenuEl;
   }
   function updateSettingsMenu() {
     if (!settingsMenuEl) return;
-    const item = settingsMenuEl.querySelector('[data-act="toggle-inspect"]');
-    if (item) item.textContent = (hoverInspectEnabled ? "\u2713 " : "\u2003 ") + "Hover to inspect";
+    const set = (act, text, on, disabled) => {
+      const el = settingsMenuEl.querySelector('[data-act="' + act + '"]');
+      if (!el) return;
+      el.textContent = (on ? "\u2713 " : "    ") + text;
+      el.classList.toggle("disabled", !!disabled);
+    };
+    set("toggle-inspect", "Hover to inspect", hoverInspectEnabled, false);
+    const off = !hoverInspectEnabled;
+    set("mode-hover", "Tool: read-out + crosshair", inspectMode === "hover", off);
+    set("mode-measure", "Tool: measure distance", inspectMode === "measure", off);
+    set("mode-crop", "Tool: zoom to region", inspectMode === "crop", off);
   }
   function hideSettingsMenu() {
     if (settingsMenuEl) settingsMenuEl.style.display = "none";
