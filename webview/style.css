@@ -276,6 +276,22 @@ button.icon-btn svg[fill="currentColor"] {
     border-top: 3px solid var(--accent);
 }
 
+/* Hover-to-inspect readout: follows the cursor over the static plot. */
+.inspect-tip {
+    position: fixed;
+    pointer-events: none;
+    z-index: 1500;
+    background: var(--vscode-editorHoverWidget-background, var(--bg-secondary));
+    color: var(--vscode-editorHoverWidget-foreground, var(--text-primary));
+    border: 1px solid var(--vscode-editorHoverWidget-border, var(--border-color));
+    padding: 3px 7px;
+    border-radius: 4px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
 /* Annotation marker: shown only on thumbnails whose plot carries annotations. */
 .annotation-badge {
     display: none;

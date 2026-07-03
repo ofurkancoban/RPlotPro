@@ -258,6 +258,29 @@
     return { out, changed, total: Math.floor(len / 4) };
   }
 
+  // webview/src/inspect.ts
+  function dataAtPixel(px, py, w, h, c) {
+    if (!c || !c.usr || !c.plt || w <= 0 || h <= 0) return null;
+    const fx = px / w;
+    const fyBottom = 1 - py / h;
+    const [l, r, b, t] = c.plt;
+    if (fx < l || fx > r || fyBottom < b || fyBottom > t) return null;
+    const xf = (fx - l) / (r - l);
+    const yf = (fyBottom - b) / (t - b);
+    const [x1, x2, y1, y2] = c.usr;
+    let x = x1 + xf * (x2 - x1);
+    let y = y1 + yf * (y2 - y1);
+    if (c.xlog) x = Math.pow(10, x);
+    if (c.ylog) y = Math.pow(10, y);
+    return { x, y };
+  }
+  function formatInspectValue(v) {
+    if (!isFinite(v)) return String(v);
+    const a = Math.abs(v);
+    if (a !== 0 && (a < 1e-3 || a >= 1e5)) return v.toExponential(2);
+    return String(Number(v.toPrecision(5)));
+  }
+
   // webview/src/main.ts
   var vscode = acquireVsCodeApi();
   var plots = [];
@@ -713,7 +736,7 @@
       if (metadata.type === "new_plot") {
         addPlot(url, metadata, port);
       } else {
-        updateCurrentPlot(pid, url, port);
+        updateCurrentPlot(pid, url, port, metadata.coords);
       }
     } catch (e) {
       log("CRITICAL ERROR: " + e);
@@ -1005,6 +1028,8 @@
       srcFile: metadata.srcFile || "",
       srcLine1: metadata.srcLine1,
       srcLine2: metadata.srcLine2,
+      coords: metadata.coords,
+      // base-graphics transform for hover-to-inspect (may be undefined)
       port: Number(port)
     };
     plots.push(plot);
@@ -1013,12 +1038,13 @@
     showPlot(currentIndex, true);
     persistArchive();
   }
-  function updateCurrentPlot(plotId, plotUrl, port) {
+  function updateCurrentPlot(plotId, plotUrl, port, coords) {
     const pid = String(plotId);
     const index = plots.findIndex((p) => String(p.id) === pid);
     if (index >= 0) {
       plots[index].data = plotUrl;
       if (port) plots[index].port = Number(port);
+      if (coords !== void 0) plots[index].coords = coords;
       if (!isSplitMode && index === currentIndex) {
         const plotImage2 = document.getElementById("plotImage");
         const wrapper = document.getElementById("mainMediaWrapper");
@@ -1595,6 +1621,41 @@
       log("Diff failed: " + e);
       if (stats) stats.textContent = "Diff failed: could not rasterise one of the plots";
     }
+  }
+  var inspectTipEl = null;
+  function ensureInspectTip() {
+    if (inspectTipEl) return inspectTipEl;
+    inspectTipEl = document.createElement("div");
+    inspectTipEl.className = "inspect-tip";
+    inspectTipEl.style.display = "none";
+    document.body.appendChild(inspectTipEl);
+    return inspectTipEl;
+  }
+  function initHoverInspect() {
+    const img = document.getElementById("plotImage");
+    if (!img || img.hasInspectListener) return;
+    img.hasInspectListener = true;
+    const tip = ensureInspectTip();
+    img.addEventListener("mousemove", (e) => {
+      const plot = currentIndex >= 0 ? plots[currentIndex] : null;
+      if (isAnnotating || isSplitMode || !plot || !plot.coords) {
+        tip.style.display = "none";
+        return;
+      }
+      const rect = img.getBoundingClientRect();
+      const d = dataAtPixel(e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, plot.coords);
+      if (!d) {
+        tip.style.display = "none";
+        return;
+      }
+      tip.textContent = `x: ${formatInspectValue(d.x)}    y: ${formatInspectValue(d.y)}`;
+      tip.style.display = "block";
+      tip.style.left = e.clientX + 14 + "px";
+      tip.style.top = e.clientY + 14 + "px";
+    });
+    img.addEventListener("mouseleave", () => {
+      tip.style.display = "none";
+    });
   }
   function refreshLayout() {
     const w = window.innerWidth;
@@ -2630,6 +2691,7 @@
   refreshLayout();
   setDrawColor(currentColor);
   initCustomColorPicker();
+  initHoverInspect();
   window.addEventListener("keydown", (e) => {
     if (isAnnotating) {
       if (e.ctrlKey || e.metaKey) {

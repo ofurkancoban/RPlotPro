@@ -78,6 +78,10 @@ local(
         last_expr_file <- ""
         last_expr_line1 <- NA_integer_
         last_expr_line2 <- NA_integer_
+        # Coordinate transform of the current base-graphics plot (user-space limits and
+        # panel position), captured after replay so the webview can map a hovered pixel
+        # back to data coordinates. NULL for grid/ggplot/lattice plots.
+        last_coords <- NULL
         
         # Debug logging. Use a cross-platform temp path (tempdir()) instead of a
         # hardcoded "/tmp", which does not exist on Windows, and swallow warnings
@@ -230,7 +234,25 @@ local(
             if (nzchar(last_expr_file)) m$srcFile <- last_expr_file
             if (!is.na(last_expr_line1)) m$srcLine1 <- last_expr_line1
             if (!is.na(last_expr_line2)) m$srcLine2 <- last_expr_line2
+            if (!is.null(last_coords)) m$coords <- last_coords
             m
+        }
+
+        # Read the current device's base-graphics coordinate system. Must be called
+        # while the (svglite) device is still open, right after replayPlot. Returns NULL
+        # for grid-based plots (ggplot2/lattice), which leave par("usr") at its default.
+        read_plot_coords <- function() {
+            tryCatch({
+                usr <- graphics::par("usr")
+                plt <- graphics::par("plt")
+                if (isTRUE(all.equal(as.numeric(usr), c(0, 1, 0, 1)))) return(NULL)
+                list(
+                    usr  = as.numeric(usr),
+                    plt  = as.numeric(plt),
+                    xlog = isTRUE(graphics::par("xlog")),
+                    ylog = isTRUE(graphics::par("ylog"))
+                )
+            }, error = function(e) NULL)
         }
 
         process_internal_capture <- function(current_plot, temp_file_path = NULL,
@@ -247,6 +269,7 @@ local(
                     temp_file <- tempfile(fileext = ".svg")
                     svglite::svglite(filename = temp_file, width = 10, height = 6, bg = "white")
                     replayPlot(current_plot)
+                    last_coords <<- read_plot_coords()
                     dev.off()
                 } else temp_file <- temp_file_path
 
@@ -324,6 +347,7 @@ local(
                     temp_file <- tempfile(fileext = ".svg")
                     svglite::svglite(filename = temp_file, width = 10, height = 6, bg = "white")
                     replayPlot(current_plot)
+                    last_coords <<- read_plot_coords()
                     dev.off()
 
                     process_internal_capture(current_plot, temp_file_path = temp_file,

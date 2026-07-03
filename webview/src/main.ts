@@ -18,6 +18,7 @@ declare global {
         src?: any; value?: any; disabled?: any; getContext?: any;
         naturalWidth?: any; naturalHeight?: any; width?: any; height?: any;
         pendingSource?: any; hasPanListener?: any; hasDragListener?: any; hasListener?: any;
+        hasInspectListener?: any;
     }
 }
 
@@ -554,7 +555,7 @@ function handleBinaryMessage(buffer, port) {
         if (metadata.type === 'new_plot') {
             addPlot(url, metadata, port);
         } else {
-            updateCurrentPlot(pid, url, port);
+            updateCurrentPlot(pid, url, port, metadata.coords);
         }
     } catch (e) {
         log('CRITICAL ERROR: ' + e);
@@ -903,6 +904,7 @@ function addPlot(plotUrl, metadata: any = {}, port?) {
         srcFile: metadata.srcFile || '',
         srcLine1: metadata.srcLine1,
         srcLine2: metadata.srcLine2,
+        coords: metadata.coords, // base-graphics transform for hover-to-inspect (may be undefined)
         port: Number(port)
     };
     plots.push(plot);
@@ -913,12 +915,13 @@ function addPlot(plotUrl, metadata: any = {}, port?) {
     persistArchive();
 }
 
-function updateCurrentPlot(plotId, plotUrl, port) {
+function updateCurrentPlot(plotId, plotUrl, port, coords?) {
     const pid = String(plotId);
     const index = plots.findIndex(p => String(p.id) === pid);
     if (index >= 0) {
         plots[index].data = plotUrl;
         if (port) plots[index].port = Number(port);
+        if (coords !== undefined) plots[index].coords = coords;
         
         if (!isSplitMode && index === currentIndex) {
             const plotImage = document.getElementById('plotImage');
@@ -1629,6 +1632,40 @@ async function computeDiff() {
         log('Diff failed: ' + e);
         if (stats) stats.textContent = 'Diff failed: could not rasterise one of the plots';
     }
+}
+
+// --- Hover-to-inspect ---
+// Reads out the data coordinates under the cursor on the static plot, using the
+// coordinate transform the R server captured. Only active for base-graphics plots
+// (plot.coords present) in single view, and never while annotating.
+let inspectTipEl = null;
+function ensureInspectTip() {
+    if (inspectTipEl) return inspectTipEl;
+    inspectTipEl = document.createElement('div');
+    inspectTipEl.className = 'inspect-tip';
+    inspectTipEl.style.display = 'none';
+    document.body.appendChild(inspectTipEl);
+    return inspectTipEl;
+}
+
+function initHoverInspect() {
+    const img = document.getElementById('plotImage');
+    if (!img || img.hasInspectListener) return;
+    img.hasInspectListener = true;
+    const tip = ensureInspectTip();
+
+    img.addEventListener('mousemove', (e) => {
+        const plot = currentIndex >= 0 ? plots[currentIndex] : null;
+        if (isAnnotating || isSplitMode || !plot || !plot.coords) { tip.style.display = 'none'; return; }
+        const rect = img.getBoundingClientRect();
+        const d = RPlotCore.dataAtPixel(e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, plot.coords);
+        if (!d) { tip.style.display = 'none'; return; }
+        tip.textContent = `x: ${RPlotCore.formatInspectValue(d.x)}    y: ${RPlotCore.formatInspectValue(d.y)}`;
+        tip.style.display = 'block';
+        tip.style.left = (e.clientX + 14) + 'px';
+        tip.style.top = (e.clientY + 14) + 'px';
+    });
+    img.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
 }
 
 function refreshLayout() {
@@ -2921,6 +2958,7 @@ new MutationObserver(() => {
 refreshLayout();
 setDrawColor(currentColor);
 initCustomColorPicker();
+initHoverInspect();
 
 // Keyboard Shortcuts
 window.addEventListener('keydown', (e) => {
