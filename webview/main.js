@@ -758,7 +758,7 @@
         }
       };
     } catch (e) {
-      log(`Failed connection to ${port}: ${e.message}`);
+      log(`Failed connection to ${port}: ${e?.message ?? e}`);
     }
   }
   function handleBinaryMessage(buffer, port) {
@@ -957,21 +957,22 @@
   }
   function deliverPdf(pngDataUrl) {
     try {
-      const jsPDFCtor = window.jspdf && window.jspdf.jsPDF || window.jsPDF;
+      const w = window;
+      const jsPDFCtor = w.jspdf && w.jspdf.jsPDF || w.jsPDF;
       if (!jsPDFCtor) {
         vscode.postMessage({ command: "info", text: "PDF export unavailable: library not loaded" });
         return;
       }
       const img = new Image();
       img.onload = () => {
-        const w = img.naturalWidth || 800;
+        const w2 = img.naturalWidth || 800;
         const h = img.naturalHeight || 600;
         const doc = new jsPDFCtor({
-          orientation: w >= h ? "landscape" : "portrait",
+          orientation: w2 >= h ? "landscape" : "portrait",
           unit: "px",
-          format: [w, h]
+          format: [w2, h]
         });
-        doc.addImage(pngDataUrl, "PNG", 0, 0, w, h);
+        doc.addImage(pngDataUrl, "PNG", 0, 0, w2, h);
         const pdfDataUri = doc.output("datauristring");
         vscode.postMessage({ command: "save_data", data: pdfDataUri, format: "pdf" });
       };

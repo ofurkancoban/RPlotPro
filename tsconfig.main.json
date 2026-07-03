@@ -1,5 +1,5 @@
 {
-    "//": "Lenient type-check for the ported webview entry (webview/src/main.ts). Not strict yet: noImplicitAny/strictNullChecks stay off so the DOM-heavy ported JS is manageable, but this still catches undeclared identifiers (the startX/startY class of strict-mode bug), wrong argument counts, bad Promise types, etc. Tighten module by module by enabling stricter flags here as main.ts is annotated.",
+    "//": "Type-check for the ported webview entry (webview/src/main.ts). The strict-family checks that already pass are enabled below; strictNullChecks and noImplicitAny remain off (the DOM-heavy ported JS needs a lot of annotation) and are the next increments, to be tackled module by module while replacing the declare-global seam with real casts. Even at this bar it catches undeclared identifiers (the startX/startY class of strict-mode bug), wrong argument counts and bad Promise types.",
     "compilerOptions": {
         "noEmit": true,
         "target": "es2020",
@@ -8,6 +8,12 @@
         "lib": ["es2020", "dom"],
         "strict": false,
         "noImplicitAny": false,
+        "noImplicitThis": true,
+        "alwaysStrict": true,
+        "strictBindCallApply": true,
+        "strictFunctionTypes": true,
+        "noImplicitReturns": true,
+        "useUnknownInCatchVariables": true,
         "esModuleInterop": true,
         "skipLibCheck": true
     },
