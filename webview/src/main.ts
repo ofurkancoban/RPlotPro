@@ -1682,7 +1682,8 @@ function inspectOverlayCtx() {
     if (overlay.width !== w || overlay.height !== h) { overlay.width = w; overlay.height = h; }
     const ctx = overlay.getContext('2d');
     if (!ctx) return null;
-    return { ctx, w, h, img };
+    // Content rect of the letterboxed image, in the same overlay pixel space.
+    return { ctx, w, h, img, content: imageContentRect(img) };
 }
 
 function clearInspectOverlay() {
@@ -1709,9 +1710,29 @@ function normalizeSnapPoints(p) {
     return { x: xs, y: ys };
 }
 
-function pixelInImage(e, img) {
+// Rect of the actually drawn image content inside the <img> element box.
+// With object-fit: contain the content is centered and letterboxed whenever the
+// element box aspect differs from the image's natural aspect; mapping mouse or
+// overlay pixels against the element box instead of this rect skews the
+// coordinate readout and draws projection lines past the plot panel.
+function imageContentRect(img) {
     const rect = img.getBoundingClientRect();
-    return { px: e.clientX - rect.left, py: e.clientY - rect.top, w: rect.width, h: rect.height };
+    const nw = img.naturalWidth, nh = img.naturalHeight;
+    if (!nw || !nh || rect.width <= 0 || rect.height <= 0) {
+        return { left: rect.left, top: rect.top, offX: 0, offY: 0, w: rect.width, h: rect.height };
+    }
+    const s = Math.min(rect.width / nw, rect.height / nh);
+    const w = nw * s, h = nh * s;
+    return {
+        left: rect.left, top: rect.top,
+        offX: (rect.width - w) / 2, offY: (rect.height - h) / 2,
+        w, h
+    };
+}
+
+function pixelInImage(e, img) {
+    const c = imageContentRect(img);
+    return { px: e.clientX - c.left - c.offX, py: e.clientY - c.top - c.offY, w: c.w, h: c.h };
 }
 
 function drawHoverInspect(plot, px, py, w, h) {
@@ -1728,14 +1749,17 @@ function drawHoverInspect(plot, px, py, w, h) {
         const np = RPlotCore.nearestPoint(px, py, plot.points.x, plot.points.y, w, h, plot.coords, 16);
         if (np) { d = { x: np.x, y: np.y }; snapPx = np.px; snapPy = np.py; snapped = true; }
     }
-    if (!d) { tip.style.display = 'none'; return; }
+    // Hide the readout while the cursor is over a letterbox bar, outside the
+    // drawn image content.
+    if (!d || px < 0 || py < 0 || px > w || py > h) { tip.style.display = 'none'; o.ctx.clearRect(0, 0, o.w, o.h); return; }
 
-    // Scale image-space (w,h) to overlay pixels (may differ slightly).
-    const sx = o.w / w, sy = o.h / h;
-    const ox = snapPx * sx, oy = snapPy * sy;
-    const panel = RPlotCore.panelPixelRect(o.w, o.h, plot.coords);
-    const bottom = panel ? panel.bottom : o.h;
-    const left = panel ? panel.left : 0;
+    // Positions are in image-content pixels; the overlay covers the whole img
+    // element box, so shift by the letterbox offset to land on the content.
+    const c = o.content;
+    const ox = c.offX + snapPx, oy = c.offY + snapPy;
+    const panel = RPlotCore.panelPixelRect(w, h, plot.coords);
+    const bottom = (panel ? panel.bottom : h) + c.offY;
+    const left = (panel ? panel.left : 0) + c.offX;
 
     o.ctx.strokeStyle = 'rgba(255,64,129,0.9)';
     o.ctx.lineWidth = 1;
@@ -1757,31 +1781,32 @@ function drawHoverInspect(plot, px, py, w, h) {
 
     tip.textContent = (snapped ? '● ' : '') + `x: ${RPlotCore.formatInspectValue(d.x)}    y: ${RPlotCore.formatInspectValue(d.y)}`;
     tip.style.display = 'block';
-    tip.style.left = (px + document.getElementById('plotImage').getBoundingClientRect().left + 14) + 'px';
-    tip.style.top = (py + document.getElementById('plotImage').getBoundingClientRect().top + 14) + 'px';
+    tip.style.left = (px + c.left + c.offX + 14) + 'px';
+    tip.style.top = (py + c.top + c.offY + 14) + 'px';
 }
 
 function drawMeasure(plot, curPx, curPy, w, h) {
     const o = inspectOverlayCtx();
     if (!o) return;
     o.ctx.clearRect(0, 0, o.w, o.h);
-    const sx = o.w / w, sy = o.h / h;
+    // Content-pixel positions; shift by the letterbox offset onto the overlay.
+    const fx = o.content.offX, fy = o.content.offY;
     const tip = ensureInspectTip();
     const pts = measurePts.slice();
     const live = pts.length === 1 ? { px: curPx, py: curPy } : null;
     const a = pts[0], b = pts[1] || live;
     o.ctx.fillStyle = o.ctx.strokeStyle = 'rgba(255,64,129,0.95)';
-    for (const p of pts) { o.ctx.beginPath(); o.ctx.arc(p.px * sx, p.py * sy, 3, 0, 7); o.ctx.fill(); }
+    for (const p of pts) { o.ctx.beginPath(); o.ctx.arc(p.px + fx, p.py + fy, 3, 0, 7); o.ctx.fill(); }
     if (a && b) {
         o.ctx.lineWidth = 1.5;
-        o.ctx.beginPath(); o.ctx.moveTo(a.px * sx, a.py * sy); o.ctx.lineTo(b.px * sx, b.py * sy); o.ctx.stroke();
+        o.ctx.beginPath(); o.ctx.moveTo(a.px + fx, a.py + fy); o.ctx.lineTo(b.px + fx, b.py + fy); o.ctx.stroke();
         const da = RPlotCore.dataAtPixel(a.px, a.py, w, h, plot.coords);
         const db = RPlotCore.dataAtPixel(b.px, b.py, w, h, plot.coords);
         if (da && db) {
             const dx = db.x - da.x, dy = db.y - da.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
             const txt = `Δx: ${RPlotCore.formatInspectValue(dx)}   Δy: ${RPlotCore.formatInspectValue(dy)}   |d|: ${RPlotCore.formatInspectValue(dist)}`;
-            inspectLabel(o.ctx, txt, Math.min(a.px, b.px) * sx, Math.min(a.py, b.py) * sy - 4);
+            inspectLabel(o.ctx, txt, Math.min(a.px, b.px) + fx, Math.min(a.py, b.py) + fy - 4);
             tip.style.display = 'none';
         }
     }
@@ -1791,9 +1816,9 @@ function drawCrop(curPx, curPy, w, h) {
     const o = inspectOverlayCtx();
     if (!o || !cropStart) return;
     o.ctx.clearRect(0, 0, o.w, o.h);
-    const sx = o.w / w, sy = o.h / h;
-    const x = cropStart.px * sx, y = cropStart.py * sy;
-    const cw = (curPx - cropStart.px) * sx, ch = (curPy - cropStart.py) * sy;
+    const fx = o.content.offX, fy = o.content.offY;
+    const x = cropStart.px + fx, y = cropStart.py + fy;
+    const cw = curPx - cropStart.px, ch = curPy - cropStart.py;
     o.ctx.strokeStyle = 'rgba(30,144,255,0.95)';
     o.ctx.fillStyle = 'rgba(30,144,255,0.12)';
     o.ctx.lineWidth = 1;

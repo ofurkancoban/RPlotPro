@@ -1718,7 +1718,7 @@
     }
     const ctx = overlay.getContext("2d");
     if (!ctx) return null;
-    return { ctx, w, h, img };
+    return { ctx, w, h, img, content: imageContentRect(img) };
   }
   function clearInspectOverlay() {
     const o = inspectOverlayCtx();
@@ -1739,9 +1739,26 @@
     if (xs.length === 0 || xs.length !== ys.length) return void 0;
     return { x: xs, y: ys };
   }
-  function pixelInImage(e, img) {
+  function imageContentRect(img) {
     const rect = img.getBoundingClientRect();
-    return { px: e.clientX - rect.left, py: e.clientY - rect.top, w: rect.width, h: rect.height };
+    const nw = img.naturalWidth, nh = img.naturalHeight;
+    if (!nw || !nh || rect.width <= 0 || rect.height <= 0) {
+      return { left: rect.left, top: rect.top, offX: 0, offY: 0, w: rect.width, h: rect.height };
+    }
+    const s = Math.min(rect.width / nw, rect.height / nh);
+    const w = nw * s, h = nh * s;
+    return {
+      left: rect.left,
+      top: rect.top,
+      offX: (rect.width - w) / 2,
+      offY: (rect.height - h) / 2,
+      w,
+      h
+    };
+  }
+  function pixelInImage(e, img) {
+    const c = imageContentRect(img);
+    return { px: e.clientX - c.left - c.offX, py: e.clientY - c.top - c.offY, w: c.w, h: c.h };
   }
   function drawHoverInspect(plot, px, py, w, h) {
     const o = inspectOverlayCtx();
@@ -1759,15 +1776,16 @@
         snapped = true;
       }
     }
-    if (!d) {
+    if (!d || px < 0 || py < 0 || px > w || py > h) {
       tip.style.display = "none";
+      o.ctx.clearRect(0, 0, o.w, o.h);
       return;
     }
-    const sx = o.w / w, sy = o.h / h;
-    const ox = snapPx * sx, oy = snapPy * sy;
-    const panel = panelPixelRect(o.w, o.h, plot.coords);
-    const bottom = panel ? panel.bottom : o.h;
-    const left = panel ? panel.left : 0;
+    const c = o.content;
+    const ox = c.offX + snapPx, oy = c.offY + snapPy;
+    const panel = panelPixelRect(w, h, plot.coords);
+    const bottom = (panel ? panel.bottom : h) + c.offY;
+    const left = (panel ? panel.left : 0) + c.offX;
     o.ctx.strokeStyle = "rgba(255,64,129,0.9)";
     o.ctx.lineWidth = 1;
     o.ctx.setLineDash([4, 3]);
@@ -1793,14 +1811,14 @@
     inspectLabel(o.ctx, formatInspectValue(d.y), left + 3, oy - 2);
     tip.textContent = (snapped ? "\u25CF " : "") + `x: ${formatInspectValue(d.x)}    y: ${formatInspectValue(d.y)}`;
     tip.style.display = "block";
-    tip.style.left = px + document.getElementById("plotImage").getBoundingClientRect().left + 14 + "px";
-    tip.style.top = py + document.getElementById("plotImage").getBoundingClientRect().top + 14 + "px";
+    tip.style.left = px + c.left + c.offX + 14 + "px";
+    tip.style.top = py + c.top + c.offY + 14 + "px";
   }
   function drawMeasure(plot, curPx, curPy, w, h) {
     const o = inspectOverlayCtx();
     if (!o) return;
     o.ctx.clearRect(0, 0, o.w, o.h);
-    const sx = o.w / w, sy = o.h / h;
+    const fx = o.content.offX, fy = o.content.offY;
     const tip = ensureInspectTip();
     const pts = measurePts.slice();
     const live = pts.length === 1 ? { px: curPx, py: curPy } : null;
@@ -1808,14 +1826,14 @@
     o.ctx.fillStyle = o.ctx.strokeStyle = "rgba(255,64,129,0.95)";
     for (const p of pts) {
       o.ctx.beginPath();
-      o.ctx.arc(p.px * sx, p.py * sy, 3, 0, 7);
+      o.ctx.arc(p.px + fx, p.py + fy, 3, 0, 7);
       o.ctx.fill();
     }
     if (a && b) {
       o.ctx.lineWidth = 1.5;
       o.ctx.beginPath();
-      o.ctx.moveTo(a.px * sx, a.py * sy);
-      o.ctx.lineTo(b.px * sx, b.py * sy);
+      o.ctx.moveTo(a.px + fx, a.py + fy);
+      o.ctx.lineTo(b.px + fx, b.py + fy);
       o.ctx.stroke();
       const da = dataAtPixel(a.px, a.py, w, h, plot.coords);
       const db = dataAtPixel(b.px, b.py, w, h, plot.coords);
@@ -1823,7 +1841,7 @@
         const dx = db.x - da.x, dy = db.y - da.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         const txt = `\u0394x: ${formatInspectValue(dx)}   \u0394y: ${formatInspectValue(dy)}   |d|: ${formatInspectValue(dist)}`;
-        inspectLabel(o.ctx, txt, Math.min(a.px, b.px) * sx, Math.min(a.py, b.py) * sy - 4);
+        inspectLabel(o.ctx, txt, Math.min(a.px, b.px) + fx, Math.min(a.py, b.py) + fy - 4);
         tip.style.display = "none";
       }
     }
@@ -1832,9 +1850,9 @@
     const o = inspectOverlayCtx();
     if (!o || !cropStart) return;
     o.ctx.clearRect(0, 0, o.w, o.h);
-    const sx = o.w / w, sy = o.h / h;
-    const x = cropStart.px * sx, y = cropStart.py * sy;
-    const cw = (curPx - cropStart.px) * sx, ch = (curPy - cropStart.py) * sy;
+    const fx = o.content.offX, fy = o.content.offY;
+    const x = cropStart.px + fx, y = cropStart.py + fy;
+    const cw = curPx - cropStart.px, ch = curPy - cropStart.py;
     o.ctx.strokeStyle = "rgba(30,144,255,0.95)";
     o.ctx.fillStyle = "rgba(30,144,255,0.12)";
     o.ctx.lineWidth = 1;
