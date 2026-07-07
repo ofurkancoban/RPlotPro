@@ -2,7 +2,7 @@
   "name": "r-plot-pro",
   "displayName": "R Plot Pro",
   "description": "The ultimate R and Julia visualization experience for VS Code. High-performance, real-time, and designed for professionals who demand the best of RStudio and Positron.",
-  "version": "0.50.0",
+  "version": "0.51.0",
   "license": "MIT",
   "publisher": "ofurkancoban",
   "icon": "assets/icon.png",

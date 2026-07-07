@@ -1,5 +1,26 @@
 # R Plot Pro - Release Notes
 
+## v0.51.0 - ggplot2 inspect, presentation mode, laser pointer & quarto fix
+
+### New
+- **ggplot2 inspect support** - hover read-out, nearest-point snapping, the measure tool and zoom-to-region now work on single-panel Cartesian ggplots, not just base graphics. The server re-prints the ggplot during capture, reads the panel rect from the live grid viewport tree and the axis ranges, log transforms and layer points from ggplot_build. Facets and polar coordinates fall back gracefully. Zoom-to-region emits a ready-to-add coord_cartesian() layer for ggplots.
+- **Presentation mode** - walk ALL plots full screen inside the panel (settings menu entry or the P key). Arrows or space navigate, C toggles a source-code overlay, notes show as captions, Esc exits.
+- **Laser pointer** - a toolbar toggle (or the L key) turns the cursor into a glowing red dot over the plot; hold the mouse button and drag to leave a GoodNotes-style comet trail that dissolves after about 0.7s. Only active over plot images and disabled while the gallery is empty.
+
+### Fixed
+- **Quarto / knitr / Rscript no longer break** - the .Rprofile hook sourced init.R in non-interactive R too, and the null graphics device plus plot traces crashed quarto's R engine (could not find function "execute"). init.R is now a no-op unless the session is interactive.
+- **First render fits the panel** - initial captures used a fixed 10x6 inch device and were letterboxed until the first resize; both capture sites now size the device from the viewer panel dimensions.
+- **Hover-inspect alignment** - the overlay mapped the whole img element box instead of the letterboxed content rect, so snap rings landed slightly off and projection lines ran past the panel; mouse mapping and drawing now use the drawn content rect.
+- **Hover stays aligned after resize** - resize re-renders now re-read the coordinate transform (panel fractions depend on device size) and forward it to the webview.
+- **Consecutive ggplots no longer collapse into one gallery entry** on ggplot2 4.x (grid.newpage is now traced as the grid equivalent of plot.new).
+- **Single-point plots snap correctly** - a lone point was serialized as a JSON scalar and silently disabled snapping.
+- **Point buffer overshoot** - one oversized draw past the 5000-point cap dropped the whole snap set; it is truncated instead.
+- **Trace hygiene** - stopping the viewer now untraces plot.xy, grid.newpage and set_last_plot as well.
+
+### Under the hood
+- The hook-content unit tests now exercise the production .Rprofile hook string (including the interactive() guard).
+- Duplicate CSS rules cleaned up; inspect overlay sized from the same rect the mouse handlers use, with a null-guarded 2d context.
+
 ## v0.50.0 - Interactive inspect: hover read-out, point snapping, measure and zoom
 
 ### New
