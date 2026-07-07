@@ -1519,6 +1519,11 @@
     document.getElementById("zoomBtn").disabled = !hasPlots;
     document.getElementById("aspectBtn").disabled = !hasPlots;
     document.getElementById("annotateBtn").disabled = !hasPlots;
+    const laserBtn = document.getElementById("laserBtn");
+    if (laserBtn) {
+      laserBtn.disabled = !hasPlots;
+      if (!hasPlots && laserOn) toggleLaserPointer();
+    }
     document.getElementById("darkModeBtn").disabled = !hasPlots;
     document.getElementById("favoriteFilterBtn").disabled = !hasPlots;
     const splitBtn = document.getElementById("splitBtn");
@@ -2057,6 +2062,7 @@
     }
   }
   function toggleLaserPointer() {
+    if (!laserOn && plots.length === 0) return;
     laserOn = !laserOn;
     const c = ensureLaserCanvas();
     c.style.display = laserOn ? "block" : "none";
