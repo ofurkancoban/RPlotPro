@@ -2009,10 +2009,10 @@ function drawLaserFrame() {
                 const eased = alpha * alpha;                     // gentler tail fade
                 if (pass === 0) {
                     ctx.strokeStyle = `rgba(255, 45, 45, ${(eased * 0.28).toFixed(3)})`;
-                    ctx.lineWidth = 6 + 12 * eased;
+                    ctx.lineWidth = 4 + 8 * eased;
                 } else {
                     ctx.strokeStyle = `rgba(255, 70, 70, ${(0.25 + eased * 0.7).toFixed(3)})`;
-                    ctx.lineWidth = 1.5 + 3.5 * eased;
+                    ctx.lineWidth = 1 + 2.5 * eased;
                 }
                 seg(i);
             }
@@ -2021,13 +2021,13 @@ function drawLaserFrame() {
 
     // Glowing head follows the cursor whenever it is over a plot.
     if (laserHead && laserOverPlot) {
-        const g = ctx.createRadialGradient(laserHead.x, laserHead.y, 0, laserHead.x, laserHead.y, 10);
+        const g = ctx.createRadialGradient(laserHead.x, laserHead.y, 0, laserHead.x, laserHead.y, 7);
         g.addColorStop(0, 'rgba(255, 110, 110, 1)');
         g.addColorStop(0.45, 'rgba(255, 45, 45, 0.9)');
         g.addColorStop(1, 'rgba(255, 45, 45, 0)');
         ctx.fillStyle = g;
         ctx.beginPath();
-        ctx.arc(laserHead.x, laserHead.y, 10, 0, 7);
+        ctx.arc(laserHead.x, laserHead.y, 7, 0, 7);
         ctx.fill();
     }
 
