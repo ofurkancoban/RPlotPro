@@ -170,11 +170,6 @@ button.icon-btn svg[fill="currentColor"] {
     /* Sidebar second naturally */
 }
 
-.plot-viewer {
-     /* Plot first naturally */
-     flex: 1;
-}
-
 .plot-list {
     flex: 1;
     overflow-y: auto;
@@ -864,6 +859,7 @@ body.is-annotating .media-wrapper .annotation-layer {
 }
 
 .split-pane {
+    cursor: pointer; /* panes are clickable to focus for diff/split selection */
     position: relative;
     height: 100%;
     display: flex;
@@ -1000,10 +996,6 @@ body.is-annotating .media-wrapper .annotation-layer {
     background: var(--accent);
     color: white;
     box-shadow: 0 0 10px rgba(0,0,0,0.3);
-}
-
-.split-pane {
-    cursor: pointer;
 }
 
 /* Annotation Styles */

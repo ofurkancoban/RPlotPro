@@ -3,7 +3,8 @@ import {
     detectLaunchLanguage,
     contentHasHook,
     addHookToContent,
-    removeHookFromContent
+    removeHookFromContent,
+    R_HOOK_BODY
 } from '../extension';
 
 suite('detectLaunchLanguage', () => {
@@ -17,7 +18,13 @@ suite('detectLaunchLanguage', () => {
 });
 
 suite('startup-hook content helpers', () => {
-    const BODY = 'local({i<-Sys.getenv("RPLOT_PRO_INIT");if(nzchar(i)&&file.exists(i))source(i)})';
+    // Exercise the production hook body, not a local copy, so changes to the
+    // real string (like the interactive() guard) stay covered by these tests.
+    const BODY = R_HOOK_BODY;
+
+    test('production R hook only runs in interactive sessions', () => {
+        assert.ok(BODY.includes('if(interactive())'));
+    });
 
     test('adds a hook to empty content', () => {
         const out = addHookToContent('', BODY);

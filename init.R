@@ -5,6 +5,13 @@
 # All custom header/logo reconstruction has been removed to preserve native aesthetics.
 
 
+# Only engage the plot viewer in an interactive R session. Non-interactive R
+# (quarto / knitr render, Rscript batch, R CMD) must be left completely
+# untouched: the null graphics device and the plot.new / plot.xy traces would
+# otherwise interfere with their own plot capture and corrupt the stdio
+# protocol that quarto's R engine relies on.
+if (interactive()) {
+
 # v0.38.0 Internal Wipe
 cat("\r\x1b[A\x1b[K")
 
@@ -114,3 +121,5 @@ local({
         error = function(e) {}
     )
 })
+
+}  # end if (interactive())

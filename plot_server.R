@@ -82,6 +82,9 @@ local(
         # panel position), captured after replay so the webview can map a hovered pixel
         # back to data coordinates. NULL for grid/ggplot/lattice plots.
         last_coords <- NULL
+        # Coordinate transform of the most recent resize re-render; forwarded with
+        # the update_plot message so hover-inspect stays aligned after a resize.
+        resize_coords <- NULL
         # Data points drawn on the current frame (accumulated from graphics::plot.xy in
         # user coordinates), so the webview can snap hover-inspect to the nearest point.
         # Reset on each new frame; capped to keep the payload small.
@@ -149,6 +152,10 @@ local(
                     temp_file <- tempfile(fileext = ".svg")
                     svglite::svglite(filename = temp_file, width = width_in, height = height_in, bg = "white")
                     replayPlot(target_plot)
+                    # Panel fractions (plt) depend on device size, so re-read the
+                    # coordinate transform for the resized render and let the ws
+                    # handler forward it with the update_plot message.
+                    resize_coords <<- read_plot_coords()
                     dev.off()
 
                     if (file.exists(temp_file)) {
@@ -193,7 +200,9 @@ local(
                             if (!is.null(pid)) {
                                 fmt <- "svg"
                                 for (p in plots) if (as.character(p$id) == pid) { fmt <- p$format; break }
-                                send_binary_to_client(ws, "update_plot", raw_data, list(id = pid, format = fmt))
+                                meta <- list(id = pid, format = fmt)
+                                if (!is.null(resize_coords)) meta$coords <- resize_coords
+                                send_binary_to_client(ws, "update_plot", raw_data, meta)
                             }
                         }
                     }
@@ -243,9 +252,13 @@ local(
             if (!is.null(last_coords)) m$coords <- last_coords
             # Attach plotted points for hover-snapping, only for base plots with a valid
             # coordinate system and a manageable number of points.
-            if (!is.null(last_coords) && length(pending_x) > 0 && length(pending_x) <= POINTS_CAP) {
+            if (!is.null(last_coords) && length(pending_x) > 0) {
                 keep <- is.finite(pending_x) & is.finite(pending_y)
-                if (any(keep)) m$points <- list(x = pending_x[keep], y = pending_y[keep])
+                # I() keeps single-point vectors serialized as JSON arrays even
+                # with auto_unbox = TRUE, so the webview always receives arrays.
+                if (any(keep)) {
+                    m$points <- list(x = I(pending_x[keep]), y = I(pending_y[keep]))
+                }
             }
             m
         }
@@ -345,8 +358,10 @@ local(
                 y <- suppressWarnings(as.numeric(xy$y))
                 n <- min(length(x), length(y))
                 if (n > 0) {
-                    pending_x <<- c(pending_x, x[seq_len(n)])
-                    pending_y <<- c(pending_y, y[seq_len(n)])
+                    # Truncate to the cap instead of letting one oversized draw
+                    # overshoot it, which would drop the point set entirely.
+                    pending_x <<- utils::head(c(pending_x, x[seq_len(n)]), POINTS_CAP)
+                    pending_y <<- utils::head(c(pending_y, y[seq_len(n)]), POINTS_CAP)
                 }
             }, error = function(e) NULL)
         }
@@ -555,6 +570,8 @@ local(
             if (!is.null(server)) { stopServer(server); server <<- NULL }
             if (!is.null(callback_id)) { removeTaskCallback(callback_id); callback_id <<- NULL }
             tryCatch(suppressMessages(untrace("plot.new", where = asNamespace("graphics"))),
+                     error = function(e) {})
+            tryCatch(suppressMessages(untrace("plot.xy", where = asNamespace("graphics"))),
                      error = function(e) {})
             tryCatch({
                 if (requireNamespace("ggplot2", quietly = TRUE)) {
