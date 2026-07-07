@@ -1942,29 +1942,98 @@
     ensureInspectTip().style.display = "none";
   }
   var laserOn = false;
-  var laserDotEl = null;
-  function ensureLaserDot() {
-    if (laserDotEl) return laserDotEl;
-    laserDotEl = document.createElement("div");
-    laserDotEl.className = "laser-dot";
-    laserDotEl.style.display = "none";
-    document.body.appendChild(laserDotEl);
+  var laserCanvas = null;
+  var laserTrail = [];
+  var laserRafId = 0;
+  var laserOverPlot = false;
+  var LASER_TRAIL_MS = 600;
+  function laserTargetAt(e) {
+    const ids = ["plotImage", "presImg", "leftPlot", "rightPlot"];
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (!el || el.offsetParent === null) continue;
+      const r = el.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return true;
+    }
+    return false;
+  }
+  function ensureLaserCanvas() {
+    if (laserCanvas) return laserCanvas;
+    laserCanvas = document.createElement("canvas");
+    laserCanvas.id = "laserCanvas";
+    laserCanvas.className = "laser-canvas";
+    document.body.appendChild(laserCanvas);
     document.addEventListener("mousemove", (e) => {
       if (!laserOn) return;
-      laserDotEl.style.left = e.clientX + "px";
-      laserDotEl.style.top = e.clientY + "px";
-      laserDotEl.style.display = "block";
+      laserOverPlot = laserTargetAt(e);
+      document.body.classList.toggle("laser-hide-cursor", laserOverPlot);
+      if (!laserOverPlot) return;
+      laserTrail.push({ x: e.clientX, y: e.clientY, t: performance.now() });
+      if (!laserRafId) laserRafId = requestAnimationFrame(drawLaserFrame);
     });
-    return laserDotEl;
+    return laserCanvas;
+  }
+  function drawLaserFrame() {
+    laserRafId = 0;
+    const c = laserCanvas;
+    if (!c) return;
+    if (c.width !== window.innerWidth || c.height !== window.innerHeight) {
+      c.width = window.innerWidth;
+      c.height = window.innerHeight;
+    }
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, c.width, c.height);
+    const now = performance.now();
+    laserTrail = laserTrail.filter((p) => now - p.t < LASER_TRAIL_MS);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (let i = 1; i < laserTrail.length; i++) {
+      const a = laserTrail[i - 1], b = laserTrail[i];
+      const age = (now - b.t) / LASER_TRAIL_MS;
+      const alpha = Math.max(0, 1 - age);
+      ctx.strokeStyle = `rgba(255, 45, 45, ${(alpha * 0.85).toFixed(3)})`;
+      ctx.lineWidth = 2 + 7 * alpha;
+      ctx.shadowColor = "rgba(255, 45, 45, 0.6)";
+      ctx.shadowBlur = 10 * alpha;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+    const head = laserTrail[laserTrail.length - 1];
+    if (head && laserOverPlot) {
+      const g = ctx.createRadialGradient(head.x, head.y, 0, head.x, head.y, 11);
+      g.addColorStop(0, "rgba(255, 90, 90, 1)");
+      g.addColorStop(0.4, "rgba(255, 45, 45, 0.9)");
+      g.addColorStop(1, "rgba(255, 45, 45, 0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(head.x, head.y, 11, 0, 7);
+      ctx.fill();
+    }
+    if (laserOn && laserTrail.length) {
+      laserRafId = requestAnimationFrame(drawLaserFrame);
+    }
   }
   function toggleLaserPointer() {
     laserOn = !laserOn;
-    const dot = ensureLaserDot();
-    if (!laserOn) dot.style.display = "none";
-    document.body.classList.toggle("laser-active", laserOn);
+    const c = ensureLaserCanvas();
+    c.style.display = laserOn ? "block" : "none";
     const btn = document.getElementById("laserBtn");
     if (btn) btn.classList.toggle("active", laserOn);
-    if (laserOn) {
+    if (!laserOn) {
+      laserTrail = [];
+      laserOverPlot = false;
+      document.body.classList.remove("laser-hide-cursor");
+      const ctx = c.getContext("2d");
+      if (ctx) ctx.clearRect(0, 0, c.width, c.height);
+      if (laserRafId) {
+        cancelAnimationFrame(laserRafId);
+        laserRafId = 0;
+      }
+    } else {
       if (inspectTipEl) inspectTipEl.style.display = "none";
       clearInspectOverlay();
     }

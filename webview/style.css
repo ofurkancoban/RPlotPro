@@ -1366,24 +1366,20 @@ body.is-annotating .annotation-layer {
     font-size: 11px;
 }
 
-/* Laser pointer */
-.laser-dot {
+/* Laser pointer (comet-trail canvas over the whole viewport; only drawn on
+   while the cursor is over a plot image) */
+.laser-canvas {
     position: fixed;
-    width: 18px;
-    height: 18px;
-    margin: -9px 0 0 -9px;
-    border-radius: 50%;
-    background: radial-gradient(circle,
-        rgba(255, 45, 45, 1) 0%,
-        rgba(255, 45, 45, 0.85) 35%,
-        rgba(255, 45, 45, 0.25) 65%,
-        rgba(255, 45, 45, 0) 100%);
-    box-shadow: 0 0 12px 4px rgba(255, 45, 45, 0.55);
+    inset: 0;
     pointer-events: none;
     z-index: 300; /* above the presentation overlay too */
+    display: none;
 }
-body.laser-active,
-body.laser-active * {
+/* Hide the native cursor only while the laser is lit over a plot */
+body.laser-hide-cursor #plotImage,
+body.laser-hide-cursor #presImg,
+body.laser-hide-cursor #leftPlot,
+body.laser-hide-cursor #rightPlot {
     cursor: none !important;
 }
 #laserBtn.active {
