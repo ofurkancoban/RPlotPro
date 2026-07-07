@@ -1993,27 +1993,14 @@
     }
     presIdx = Math.min(Math.max(currentIndex, 0), plots.length - 1);
     presOn = true;
-    const el = buildPresentationOverlay();
-    el.style.display = "flex";
+    buildPresentationOverlay().style.display = "flex";
     renderPresentation();
-    const req = el.requestFullscreen ? el.requestFullscreen() : Promise.reject();
-    Promise.resolve(req).catch(() => {
-      vscode.postMessage({ command: "presentation_maximize", active: true });
-    });
   }
   function exitPresentation() {
     presOn = false;
     const el = document.getElementById("presOverlay");
     if (el) el.style.display = "none";
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {
-      });
-    }
-    vscode.postMessage({ command: "presentation_maximize", active: false });
   }
-  document.addEventListener("fullscreenchange", () => {
-    if (presOn && !document.fullscreenElement) exitPresentation();
-  });
   function presNav(dir) {
     if (!plots.length) return;
     presIdx = (presIdx + dir + plots.length) % plots.length;
