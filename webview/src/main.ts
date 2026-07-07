@@ -1872,6 +1872,7 @@ function initHoverInspect() {
         if (inspectMode === 'hover') clearInspectOverlay();
     });
     img.addEventListener('click', (e) => {
+        if (laserOn) return;
         const plot = inspectActivePlot();
         if (!plot || inspectMode !== 'measure') return;
         const { px, py, w, h } = pixelInImage(e, img);
@@ -1882,6 +1883,7 @@ function initHoverInspect() {
         drawMeasure(plot, px, py, w, h);
     });
     img.addEventListener('mousedown', (e) => {
+        if (laserOn) return;
         const plot = inspectActivePlot();
         if (!plot || inspectMode !== 'crop') return;
         const { px, py } = pixelInImage(e, img);
@@ -1912,7 +1914,9 @@ let laserCanvas = null;
 let laserTrail = [];          // [{x, y, t}] in viewport pixels
 let laserRafId = 0;
 let laserOverPlot = false;
-const LASER_TRAIL_MS = 600;
+let laserDrawing = false;     // mouse button held: leave a trail
+let laserHead = null;         // current pointer position while over a plot
+const LASER_TRAIL_MS = 700;
 
 // The laser only lights up over an actual plot image (main viewer, split panes
 // or the presentation slide), not over toolbars or the gallery.
@@ -1938,11 +1942,31 @@ function ensureLaserCanvas() {
         if (!laserOn) return;
         laserOverPlot = laserTargetAt(e);
         document.body.classList.toggle('laser-hide-cursor', laserOverPlot);
-        if (!laserOverPlot) return;
-        laserTrail.push({ x: e.clientX, y: e.clientY, t: performance.now() });
-        if (!laserRafId) laserRafId = requestAnimationFrame(drawLaserFrame);
+        if (!laserOverPlot) { laserHead = null; kickLaserFrame(); return; }
+        laserHead = { x: e.clientX, y: e.clientY };
+        // Only dragging leaves a trail; plain movement just moves the glow dot.
+        if (laserDrawing) {
+            const last = laserTrail[laserTrail.length - 1];
+            // Thin out sub-pixel jitter for a smoother curve.
+            if (!last || Math.hypot(e.clientX - last.x, e.clientY - last.y) > 2) {
+                laserTrail.push({ x: e.clientX, y: e.clientY, t: performance.now() });
+            }
+        }
+        kickLaserFrame();
     });
+    document.addEventListener('mousedown', (e) => {
+        if (!laserOn || e.button !== 0 || !laserTargetAt(e)) return;
+        laserDrawing = true;
+        laserTrail.push({ x: e.clientX, y: e.clientY, t: performance.now() });
+        kickLaserFrame();
+        e.preventDefault();
+    });
+    window.addEventListener('mouseup', () => { laserDrawing = false; });
     return laserCanvas;
+}
+
+function kickLaserFrame() {
+    if (!laserRafId) laserRafId = requestAnimationFrame(drawLaserFrame);
 }
 
 function drawLaserFrame() {
@@ -1960,38 +1984,54 @@ function drawLaserFrame() {
     const now = performance.now();
     laserTrail = laserTrail.filter(p => now - p.t < LASER_TRAIL_MS);
 
-    // Comet tail: segments fade and thin with age (older = thinner + fainter).
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    for (let i = 1; i < laserTrail.length; i++) {
-        const a = laserTrail[i - 1], b = laserTrail[i];
-        const age = (now - b.t) / LASER_TRAIL_MS;      // 0 fresh .. 1 gone
-        const alpha = Math.max(0, 1 - age);
-        ctx.strokeStyle = `rgba(255, 45, 45, ${(alpha * 0.85).toFixed(3)})`;
-        ctx.lineWidth = 2 + 7 * alpha;
-        ctx.shadowColor = 'rgba(255, 45, 45, 0.6)';
-        ctx.shadowBlur = 10 * alpha;
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
+    // Comet tail rendered as midpoint quadratic curves (smooth through the raw
+    // mouse samples) in two passes: a wide soft glow and a narrow bright core.
+    // Per-segment alpha/width taper with age, oldest first so fresh strokes
+    // sit on top.
+    const pts = laserTrail;
+    if (pts.length > 1) {
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        const seg = (i) => {
+            // Curve piece around pts[i]: from mid(i-1,i) to mid(i,i+1), control pts[i].
+            const a = pts[i - 1], b = pts[i], c2 = pts[i + 1] || b;
+            const mx1 = (a.x + b.x) / 2, my1 = (a.y + b.y) / 2;
+            const mx2 = (b.x + c2.x) / 2, my2 = (b.y + c2.y) / 2;
+            ctx.beginPath();
+            ctx.moveTo(mx1, my1);
+            ctx.quadraticCurveTo(b.x, b.y, mx2, my2);
+            ctx.stroke();
+        };
+        for (let pass = 0; pass < 2; pass++) {
+            for (let i = 1; i < pts.length; i++) {
+                const age = (now - pts[i].t) / LASER_TRAIL_MS;   // 0 fresh .. 1 gone
+                const alpha = Math.max(0, 1 - age);
+                const eased = alpha * alpha;                     // gentler tail fade
+                if (pass === 0) {
+                    ctx.strokeStyle = `rgba(255, 45, 45, ${(eased * 0.28).toFixed(3)})`;
+                    ctx.lineWidth = 6 + 12 * eased;
+                } else {
+                    ctx.strokeStyle = `rgba(255, 70, 70, ${(0.25 + eased * 0.7).toFixed(3)})`;
+                    ctx.lineWidth = 1.5 + 3.5 * eased;
+                }
+                seg(i);
+            }
+        }
     }
-    ctx.shadowBlur = 0;
 
-    // Comet head: bright glowing dot at the current position.
-    const head = laserTrail[laserTrail.length - 1];
-    if (head && laserOverPlot) {
-        const g = ctx.createRadialGradient(head.x, head.y, 0, head.x, head.y, 11);
-        g.addColorStop(0, 'rgba(255, 90, 90, 1)');
-        g.addColorStop(0.4, 'rgba(255, 45, 45, 0.9)');
+    // Glowing head follows the cursor whenever it is over a plot.
+    if (laserHead && laserOverPlot) {
+        const g = ctx.createRadialGradient(laserHead.x, laserHead.y, 0, laserHead.x, laserHead.y, 10);
+        g.addColorStop(0, 'rgba(255, 110, 110, 1)');
+        g.addColorStop(0.45, 'rgba(255, 45, 45, 0.9)');
         g.addColorStop(1, 'rgba(255, 45, 45, 0)');
         ctx.fillStyle = g;
         ctx.beginPath();
-        ctx.arc(head.x, head.y, 11, 0, 7);
+        ctx.arc(laserHead.x, laserHead.y, 10, 0, 7);
         ctx.fill();
     }
 
-    // Keep animating while there is anything left to fade out.
+    // Keep animating while there is a trail left to fade out.
     if (laserOn && laserTrail.length) {
         laserRafId = requestAnimationFrame(drawLaserFrame);
     }
@@ -2006,6 +2046,8 @@ function toggleLaserPointer() {
     if (!laserOn) {
         laserTrail = [];
         laserOverPlot = false;
+        laserDrawing = false;
+        laserHead = null;
         document.body.classList.remove('laser-hide-cursor');
         const ctx = c.getContext('2d');
         if (ctx) ctx.clearRect(0, 0, c.width, c.height);
