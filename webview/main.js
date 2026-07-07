@@ -1881,6 +1881,12 @@
     img.hasInspectListener = true;
     ensureInspectTip();
     img.addEventListener("mousemove", (e) => {
+      if (laserOn) {
+        ensureInspectTip().style.display = "none";
+        clearInspectOverlay();
+        img.style.cursor = "";
+        return;
+      }
       const plot = inspectActivePlot();
       if (!plot) {
         ensureInspectTip().style.display = "none";
@@ -1934,6 +1940,34 @@
     cropStart = null;
     clearInspectOverlay();
     ensureInspectTip().style.display = "none";
+  }
+  var laserOn = false;
+  var laserDotEl = null;
+  function ensureLaserDot() {
+    if (laserDotEl) return laserDotEl;
+    laserDotEl = document.createElement("div");
+    laserDotEl.className = "laser-dot";
+    laserDotEl.style.display = "none";
+    document.body.appendChild(laserDotEl);
+    document.addEventListener("mousemove", (e) => {
+      if (!laserOn) return;
+      laserDotEl.style.left = e.clientX + "px";
+      laserDotEl.style.top = e.clientY + "px";
+      laserDotEl.style.display = "block";
+    });
+    return laserDotEl;
+  }
+  function toggleLaserPointer() {
+    laserOn = !laserOn;
+    const dot = ensureLaserDot();
+    if (!laserOn) dot.style.display = "none";
+    document.body.classList.toggle("laser-active", laserOn);
+    const btn = document.getElementById("laserBtn");
+    if (btn) btn.classList.toggle("active", laserOn);
+    if (laserOn) {
+      if (inspectTipEl) inspectTipEl.style.display = "none";
+      clearInspectOverlay();
+    }
   }
   var presOn = false;
   var presIdx = 0;
@@ -3324,6 +3358,11 @@ ${code}${noteLines}
           presShowCode = !presShowCode;
           renderPresentation();
           break;
+        case "l":
+        case "L":
+          e.preventDefault();
+          toggleLaserPointer();
+          break;
       }
       return;
     }
@@ -3374,6 +3413,11 @@ ${code}${noteLines}
         e.preventDefault();
         startPresentation();
         break;
+      case "l":
+      case "L":
+        e.preventDefault();
+        toggleLaserPointer();
+        break;
     }
   });
   vscode.postMessage({ command: "request_config" });
@@ -3386,6 +3430,7 @@ ${code}${noteLines}
     clearAllPlots,
     startPresentation,
     exitPresentation,
+    toggleLaserPointer,
     clearAnnotations,
     closeNoteModal,
     closeTextModal,

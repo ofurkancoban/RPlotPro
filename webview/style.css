@@ -1365,3 +1365,27 @@ body.is-annotating .annotation-layer {
     color: rgba(255, 255, 255, 0.4);
     font-size: 11px;
 }
+
+/* Laser pointer */
+.laser-dot {
+    position: fixed;
+    width: 18px;
+    height: 18px;
+    margin: -9px 0 0 -9px;
+    border-radius: 50%;
+    background: radial-gradient(circle,
+        rgba(255, 45, 45, 1) 0%,
+        rgba(255, 45, 45, 0.85) 35%,
+        rgba(255, 45, 45, 0.25) 65%,
+        rgba(255, 45, 45, 0) 100%);
+    box-shadow: 0 0 12px 4px rgba(255, 45, 45, 0.55);
+    pointer-events: none;
+    z-index: 300; /* above the presentation overlay too */
+}
+body.laser-active,
+body.laser-active * {
+    cursor: none !important;
+}
+#laserBtn.active {
+    color: #ff2d2d;
+}
