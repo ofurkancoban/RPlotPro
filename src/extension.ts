@@ -635,6 +635,7 @@ export function deactivate() { }
 class PlotViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'rPlotViewer.mainView';
     private _view?: vscode.WebviewView;
+    private _presMaximized = false;
     public sessionConfigPath?: string;
     // JSON file on disk holding the gallery archive (plot images + metadata) so the
     // gallery survives an R-session shutdown or a VS Code restart.
@@ -695,6 +696,19 @@ class PlotViewProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'open_new_window':
                     vscode.commands.executeCommand('rPlotViewer.openGallery');
+                    break;
+                case 'presentation_maximize':
+                    // Fallback when the webview cannot enter real fullscreen:
+                    // maximize the bottom panel for presentation mode and restore
+                    // it on exit. The toggle command is stateful, so only toggle
+                    // back if we were the ones who maximized.
+                    if (message.active && !this._presMaximized) {
+                        this._presMaximized = true;
+                        vscode.commands.executeCommand('workbench.action.toggleMaximizedPanel');
+                    } else if (!message.active && this._presMaximized) {
+                        this._presMaximized = false;
+                        vscode.commands.executeCommand('workbench.action.toggleMaximizedPanel');
+                    }
                     break;
                 case 'request_export':
                     pickExportPreset().then(opts => {
