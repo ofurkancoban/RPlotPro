@@ -91,6 +91,15 @@ local(
         pending_x <- numeric(0)
         pending_y <- numeric(0)
         POINTS_CAP <- 5000
+        # The ggplot object behind the current frame (stashed by the print.ggplot
+        # trace) and per-plot ggplot objects, so hover-inspect coordinates and
+        # resize re-renders work for ggplot2 as well as base graphics.
+        last_ggplot <- NULL
+        last_render_gg <- NULL
+        gg_objects <- list()
+        # TRUE between a set_last_plot stash and the grid.newpage of the same
+        # print; lets newpage tell a ggplot frame from a lattice/raw grid frame.
+        gg_stash_fresh <- FALSE
         
         # Debug logging. Use a cross-platform temp path (tempdir()) instead of a
         # hardcoded "/tmp", which does not exist on Windows, and swallow warnings
@@ -161,12 +170,26 @@ local(
             tryCatch(
                 {
                     temp_file <- tempfile(fileext = ".svg")
+                    # Guard against re-entry: re-printing a ggplot fires the
+                    # print.ggplot trace, whose capture call must be a no-op here.
+                    was_in_capture <- in_capture
+                    in_capture <<- TRUE
+                    on.exit(in_capture <<- was_in_capture, add = TRUE)
+                    gg_obj <- if (!is.null(update_id)) gg_objects[[as.character(update_id)]] else NULL
                     svglite::svglite(filename = temp_file, width = width_in, height = height_in, bg = "white")
-                    replayPlot(target_plot)
+                    drew_gg <- FALSE
+                    if (!is.null(gg_obj)) {
+                        drew_gg <- tryCatch({ print(gg_obj); TRUE }, error = function(e) FALSE)
+                    }
+                    if (!drew_gg) replayPlot(target_plot)
                     # Panel fractions (plt) depend on device size, so re-read the
                     # coordinate transform for the resized render and let the ws
                     # handler forward it with the update_plot message.
                     resize_coords <<- read_plot_coords()
+                    if (is.null(resize_coords) && drew_gg) {
+                        info <- read_gg_coords(gg_obj)
+                        if (!is.null(info)) resize_coords <<- info$coords
+                    }
                     dev.off()
 
                     if (file.exists(temp_file)) {
@@ -199,6 +222,7 @@ local(
                         pid <- as.character(data$plot_id)
                         recordings[[pid]] <<- NULL
                         raw_plots[[pid]] <<- NULL
+                        gg_objects[[pid]] <<- NULL
                         plots <<- Filter(function(x) as.character(x$id) != pid, plots)
                         msg <- toJSON(list(type = "plot_list", plots = plots), auto_unbox = TRUE)
                         for (c in clients) tryCatch(c$send(msg), error = function(e) {})
@@ -291,6 +315,98 @@ local(
             }, error = function(e) NULL)
         }
 
+        # Coordinate system + plotted points of a single-panel Cartesian ggplot.
+        # Must run while the device the plot was just printed on is still open,
+        # because the panel position comes from the live grid viewport tree.
+        # Returns list(coords, points) in the same shape as base graphics, or NULL
+        # (facets, non-Cartesian coords, or any failure fall back gracefully).
+        read_gg_coords <- function(gg) {
+            tryCatch({
+                if (!requireNamespace("ggplot2", quietly = TRUE)) return(NULL)
+                if (!identical(class(gg$coordinates)[1], "CoordCartesian")) return(NULL)
+                b <- ggplot2::ggplot_build(gg)
+                if (length(b$layout$panel_params) != 1) return(NULL)
+                pp <- b$layout$panel_params[[1]]
+                xr <- suppressWarnings(as.numeric(pp$x.range))
+                yr <- suppressWarnings(as.numeric(pp$y.range))
+                if (length(xr) != 2 || length(yr) != 2 || any(!is.finite(c(xr, yr)))) return(NULL)
+
+                # Panel position on the device, as figure fractions (like par("plt")).
+                s <- paste(utils::capture.output(print(grid::current.vpTree())), collapse = " ")
+                panels <- unique(regmatches(s, gregexpr("panel\\.[0-9]+-[0-9]+-[0-9]+-[0-9]+", s))[[1]])
+                if (length(panels) != 1) return(NULL)
+                grid::seekViewport(panels[1])
+                lo <- grid::deviceLoc(grid::unit(0, "npc"), grid::unit(0, "npc"), valueOnly = TRUE)
+                hi <- grid::deviceLoc(grid::unit(1, "npc"), grid::unit(1, "npc"), valueOnly = TRUE)
+                grid::upViewport(0)
+                din <- graphics::par("din")
+                if (any(!is.finite(c(lo$x, lo$y, hi$x, hi$y))) || any(din <= 0)) return(NULL)
+
+                # Ranges are in transformed space for log scales, matching par("usr").
+                trans_name <- function(sc) {
+                    tryCatch(sc$trans$name, error = function(e)
+                        tryCatch(sc$get_transformation()$name, error = function(e2) ""))
+                }
+                xlog <- identical(trans_name(b$layout$panel_scales_x[[1]]), "log-10")
+                ylog <- identical(trans_name(b$layout$panel_scales_y[[1]]), "log-10")
+                coords <- list(
+                    usr = c(xr, yr),
+                    plt = c(lo$x / din[1], hi$x / din[1], lo$y / din[2], hi$y / din[2]),
+                    xlog = xlog, ylog = ylog,
+                    gg = TRUE
+                )
+
+                # Layer data for hover-snapping; back-transform log values so the
+                # webview (which log10s when xlog/ylog) receives raw data space.
+                px <- numeric(0); py <- numeric(0)
+                for (d in b$data) {
+                    if (is.data.frame(d) && all(c("x", "y") %in% names(d))) {
+                        dx <- suppressWarnings(as.numeric(d$x))
+                        dy <- suppressWarnings(as.numeric(d$y))
+                        if (xlog) dx <- 10^dx
+                        if (ylog) dy <- 10^dy
+                        px <- c(px, dx); py <- c(py, dy)
+                        if (length(px) >= POINTS_CAP) break
+                    }
+                }
+                keep <- is.finite(px) & is.finite(py)
+                pts <- if (any(keep)) {
+                    list(x = utils::head(px[keep], POINTS_CAP), y = utils::head(py[keep], POINTS_CAP))
+                } else NULL
+                list(coords = coords, points = pts)
+            }, error = function(e) NULL)
+        }
+
+        # Draw the current frame on the open capture device. ggplot frames are
+        # re-printed from the stashed object (replayPlot draws them fine but the
+        # grid viewports needed for panel geometry are not queryable afterwards);
+        # everything else replays the recording. Refreshes last_coords and, for
+        # ggplot, the snap-point buffer.
+        render_frame <- function(current_plot) {
+            gg <- last_ggplot
+            drew_gg <- FALSE
+            if (!is.null(gg)) {
+                drew_gg <- tryCatch({ print(gg); TRUE }, error = function(e) FALSE)
+            }
+            if (!drew_gg) replayPlot(current_plot)
+            last_render_gg <<- if (drew_gg) gg else NULL
+            last_coords <<- read_plot_coords()
+            if (is.null(last_coords) && drew_gg) {
+                info <- read_gg_coords(gg)
+                if (!is.null(info)) {
+                    last_coords <<- info$coords
+                    if (!is.null(info$points)) {
+                        pending_x <<- info$points$x
+                        pending_y <<- info$points$y
+                    } else {
+                        pending_x <<- numeric(0)
+                        pending_y <<- numeric(0)
+                    }
+                }
+            }
+            invisible(drew_gg)
+        }
+
         process_internal_capture <- function(current_plot, temp_file_path = NULL,
                                              bypass_throttle = FALSE, update_last = FALSE) {
             if (is.null(current_plot)) return()
@@ -304,10 +420,14 @@ local(
                 if (is.null(temp_file_path)) {
                     temp_file <- tempfile(fileext = ".svg")
                     dims <- device_dims_in()
+                    # Guard against re-entry: re-printing a ggplot fires the
+                    # print.ggplot trace, whose capture call must be a no-op here.
+                    was_in_capture <- in_capture
+                    in_capture <<- TRUE
                     svglite::svglite(filename = temp_file, width = dims$width, height = dims$height, bg = "white")
-                    replayPlot(current_plot)
-                    last_coords <<- read_plot_coords()
+                    render_frame(current_plot)
                     dev.off()
+                    in_capture <<- was_in_capture
                 } else temp_file <- temp_file_path
 
                 if (file.exists(temp_file)) {
@@ -334,12 +454,14 @@ local(
                             old_id <- plots[[1]]$id
                             recordings[[old_id]] <<- NULL
                             raw_plots[[old_id]] <<- NULL
+                            gg_objects[[old_id]] <<- NULL
                             plots <<- plots[-1]
                         }
 
                         plots[[length(plots) + 1]] <<- plot_metadata
                         recordings[[id]] <<- current_plot
                         raw_plots[[id]] <<- raw_data
+                        if (!is.null(last_render_gg)) gg_objects[[id]] <<- last_render_gg
                         send_plot_to_clients(raw_data, plot_metadata)
                     }
                     unlink(temp_file)
@@ -360,6 +482,40 @@ local(
             plot_new_called <<- TRUE
             pending_x <<- numeric(0)
             pending_y <<- numeric(0)
+            # A base-graphics frame invalidates any stashed ggplot object.
+            last_ggplot <<- NULL
+        }
+
+        # Called by trace("set_last_plot") during ggplot printing (and by the
+        # legacy print.ggplot trace on ggplot2 3.x) - stash the plot object so
+        # the capture pipeline can re-print it and read its panel geometry
+        # (replayPlot leaves no grid viewport tree to query).
+        .vsc_rplot$on_ggplot <- function(p) {
+            tryCatch({
+                last_ggplot <<- p
+                gg_stash_fresh <<- TRUE
+            }, error = function(e) NULL)
+        }
+
+        # Called by trace("grid.newpage") - the grid equivalent of plot.new.
+        # Marks a new frame (so consecutive grid plots become separate gallery
+        # entries) and invalidates the stashed ggplot: if the frame really is a
+        # ggplot, set_last_plot re-stashes it right after this fires; a lattice
+        # or raw grid frame leaves it NULL. Our own capture re-renders also fire
+        # grid.newpage, hence the in_capture guard.
+        .vsc_rplot$on_grid_newpage <- function() {
+            if (isTRUE(in_capture)) return(invisible())
+            plot_new_called <<- TRUE
+            pending_x <<- numeric(0)
+            pending_y <<- numeric(0)
+            # set_last_plot fires BEFORE grid.newpage inside a ggplot print, so a
+            # fresh stash belongs to this very frame - keep it. Without a fresh
+            # stash this is a lattice / raw grid frame - drop any stale ggplot.
+            if (isTRUE(gg_stash_fresh)) {
+                gg_stash_fresh <<- FALSE
+            } else {
+                last_ggplot <<- NULL
+            }
         }
 
         # Called by trace("plot.xy") - accumulate the plotted data points (user coords).
@@ -405,8 +561,7 @@ local(
                     temp_file <- tempfile(fileext = ".svg")
                     dims <- device_dims_in()
                     svglite::svglite(filename = temp_file, width = dims$width, height = dims$height, bg = "white")
-                    replayPlot(current_plot)
-                    last_coords <<- read_plot_coords()
+                    render_frame(current_plot)
                     dev.off()
 
                     process_internal_capture(current_plot, temp_file_path = temp_file,
@@ -544,9 +699,30 @@ local(
                     })
                 }, error = function(e) { log_debug(paste("plot.xy trace failed:", e$message)) })
 
+                # grid.newpage is the plot.new of grid graphics (ggplot2, lattice):
+                # it separates consecutive grid frames into distinct gallery entries.
                 tryCatch({
-                    if (requireNamespace("ggplot2", quietly = TRUE)) {
+                    suppressMessages(trace("grid.newpage",
+                        tracer = quote(.vsc_rplot$on_grid_newpage()),
+                        print = FALSE,
+                        where = asNamespace("grid")))
+                }, error = function(e) { log_debug(paste("grid.newpage trace failed:", e$message)) })
+
+                # ggplot2 hooks. set_last_plot fires while a ggplot prints on any
+                # ggplot2 version (including 4.x, where print.ggplot no longer
+                # exists as an S3 method); print.ggplot is kept for 3.x where its
+                # exit hook captures immediately. Registered now if ggplot2 is
+                # installed, and again via onLoad if it loads later.
+                .vsc_rplot$register_gg_traces <- function() {
+                    tryCatch({
+                        if (!requireNamespace("ggplot2", quietly = TRUE)) return(invisible())
                         ns <- asNamespace("ggplot2")
+                        if (exists("set_last_plot", envir = ns)) {
+                            suppressMessages(trace("set_last_plot",
+                                tracer = quote(.vsc_rplot$on_ggplot(value)),
+                                print = FALSE,
+                                where = ns))
+                        }
                         if (exists("print.ggplot", envir = ns)) {
                             suppressMessages(trace("print.ggplot", print = FALSE,
                                 exit = quote({
@@ -555,8 +731,15 @@ local(
                                 }),
                                 where = ns))
                         }
-                    }
-                }, error = function(e) { log_debug(paste("ggplot2 trace failed:", e$message)) })
+                    }, error = function(e) { log_debug(paste("ggplot2 trace failed:", e$message)) })
+                }
+                if (requireNamespace("ggplot2", quietly = TRUE)) {
+                    .vsc_rplot$register_gg_traces()
+                } else {
+                    setHook(packageEvent("ggplot2", "onLoad"),
+                            function(...) tryCatch(.vsc_rplot$register_gg_traces(),
+                                                   error = function(e) {}))
+                }
             }
 
             # Patch source() in GlobalEnv for reliable per-expression capture
@@ -586,6 +769,13 @@ local(
                      error = function(e) {})
             tryCatch(suppressMessages(untrace("plot.xy", where = asNamespace("graphics"))),
                      error = function(e) {})
+            tryCatch(suppressMessages(untrace("grid.newpage", where = asNamespace("grid"))),
+                     error = function(e) {})
+            tryCatch({
+                if (requireNamespace("ggplot2", quietly = TRUE)) {
+                    suppressMessages(untrace("set_last_plot", where = asNamespace("ggplot2")))
+                }
+            }, error = function(e) {})
             tryCatch({
                 if (requireNamespace("ggplot2", quietly = TRUE)) {
                     suppressMessages(untrace("print.ggplot", where = asNamespace("ggplot2")))
@@ -597,6 +787,7 @@ local(
         .vsc_rplot$clear_plots <- function() {
             plots <<- list()
             recordings <<- list()
+            gg_objects <<- list()
             last_plot <<- NULL
             msg <- toJSON(list(type = "clear_plots"), auto_unbox = TRUE)
             for (c in clients) tryCatch(c$send(msg), error = function(e) {})

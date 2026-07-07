@@ -1299,3 +1299,69 @@ body.is-annotating .annotation-layer {
     background: var(--accent) !important;
     color: white !important;
 }
+
+/* Presentation mode */
+.pres-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(10, 10, 12, 0.96);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 28px 36px 40px;
+    box-sizing: border-box;
+}
+.pres-overlay img {
+    max-width: 100%;
+    max-height: 78%;
+    object-fit: contain;
+    background: #fff;
+    border-radius: 6px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+}
+.pres-caption {
+    max-width: 80%;
+    max-height: 18%;
+    overflow: auto;
+    text-align: center;
+}
+.pres-note {
+    color: #eee;
+    font-size: 15px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+}
+.pres-code {
+    margin: 8px auto 0;
+    padding: 8px 12px;
+    text-align: left;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    color: #c9d1d9;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    white-space: pre;
+    overflow: auto;
+    max-width: 100%;
+}
+.pres-counter {
+    position: absolute;
+    top: 14px;
+    right: 20px;
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+.pres-hint {
+    position: absolute;
+    bottom: 12px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 11px;
+}
