@@ -1857,6 +1857,7 @@ function initHoverInspect() {
     ensureInspectTip();
 
     img.addEventListener('mousemove', (e) => {
+        if (laserOn) { ensureInspectTip().style.display = 'none'; clearInspectOverlay(); img.style.cursor = ''; return; }
         const plot = inspectActivePlot();
         if (!plot) { ensureInspectTip().style.display = 'none'; img.style.cursor = ''; clearInspectOverlay(); return; }
         img.style.cursor = 'crosshair';
@@ -1901,6 +1902,39 @@ function setInspectMode(mode) {
     cropStart = null;
     clearInspectOverlay();
     ensureInspectTip().style.display = 'none';
+}
+
+// --- Laser pointer: a glowing dot that follows the cursor, for walkthroughs ---
+let laserOn = false;
+let laserDotEl = null;
+
+function ensureLaserDot() {
+    if (laserDotEl) return laserDotEl;
+    laserDotEl = document.createElement('div');
+    laserDotEl.className = 'laser-dot';
+    laserDotEl.style.display = 'none';
+    document.body.appendChild(laserDotEl);
+    document.addEventListener('mousemove', (e) => {
+        if (!laserOn) return;
+        laserDotEl.style.left = e.clientX + 'px';
+        laserDotEl.style.top = e.clientY + 'px';
+        laserDotEl.style.display = 'block';
+    });
+    return laserDotEl;
+}
+
+function toggleLaserPointer() {
+    laserOn = !laserOn;
+    const dot = ensureLaserDot();
+    if (!laserOn) dot.style.display = 'none';
+    document.body.classList.toggle('laser-active', laserOn);
+    const btn = document.getElementById('laserBtn');
+    if (btn) btn.classList.toggle('active', laserOn);
+    if (laserOn) {
+        // The laser replaces the inspect readout while it is on.
+        if (inspectTipEl) inspectTipEl.style.display = 'none';
+        clearInspectOverlay();
+    }
 }
 
 // --- Presentation mode: full-screen walk through ALL plots with note + code ---
@@ -3532,6 +3566,7 @@ window.addEventListener('keydown', (e) => {
             case 'ArrowRight': case ' ': e.preventDefault(); presNav(1); break;
             case 'ArrowLeft':  e.preventDefault(); presNav(-1); break;
             case 'c': case 'C': e.preventDefault(); presShowCode = !presShowCode; renderPresentation(); break;
+            case 'l': case 'L': e.preventDefault(); toggleLaserPointer(); break;
         }
         return;
     }
@@ -3563,6 +3598,7 @@ window.addEventListener('keydown', (e) => {
         case 'e': case 'E': e.preventDefault(); exportPlot(); break;
         case 'd': case 'D': e.preventDefault(); toggleDarkMode(); break;
         case 'p': case 'P': e.preventDefault(); startPresentation(); break;
+        case 'l': case 'L': e.preventDefault(); toggleLaserPointer(); break;
     }
 });
 
@@ -3580,6 +3616,7 @@ Object.assign(window as any, {
     clearAllPlots,
     startPresentation,
     exitPresentation,
+    toggleLaserPointer,
     clearAnnotations,
     closeNoteModal,
     closeTextModal,
