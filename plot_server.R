@@ -142,6 +142,17 @@ local(
         }
 
         # Capture and send to webview
+        # Device size (in inches at 96 dpi) matching the viewer panel, so the very
+        # first render already fits the canvas instead of a fixed 10x6 that only
+        # gets corrected by the next resize round-trip. client_dims is refreshed
+        # by the webview on connect and on every layout change.
+        device_dims_in <- function() {
+            list(
+                width  = max(client_dims$width, 50) / 96,
+                height = max(client_dims$height, 50) / 96
+            )
+        }
+
         capture_and_send <- function(target_plot, width, height, update_id = NULL) {
             if (is.null(target_plot)) return(NULL)
             width_in <- max(width, 50) / 96
@@ -292,7 +303,8 @@ local(
 
                 if (is.null(temp_file_path)) {
                     temp_file <- tempfile(fileext = ".svg")
-                    svglite::svglite(filename = temp_file, width = 10, height = 6, bg = "white")
+                    dims <- device_dims_in()
+                    svglite::svglite(filename = temp_file, width = dims$width, height = dims$height, bg = "white")
                     replayPlot(current_plot)
                     last_coords <<- read_plot_coords()
                     dev.off()
@@ -391,7 +403,8 @@ local(
                     on.exit(in_capture <<- FALSE)
 
                     temp_file <- tempfile(fileext = ".svg")
-                    svglite::svglite(filename = temp_file, width = 10, height = 6, bg = "white")
+                    dims <- device_dims_in()
+                    svglite::svglite(filename = temp_file, width = dims$width, height = dims$height, bg = "white")
                     replayPlot(current_plot)
                     last_coords <<- read_plot_coords()
                     dev.off()
