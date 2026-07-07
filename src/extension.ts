@@ -123,7 +123,7 @@ async function resolveBackends(backends: Backend[]): Promise<ResolvedBackend[]> 
 // Both files use '#' comments, so the marker + add/remove logic is shared.
 const HOOK_START = '# [R Plot Pro]';
 const HOOK_END = '# [R Plot Pro END]';
-const R_HOOK_BODY = 'local({i<-Sys.getenv("RPLOT_PRO_INIT");if(nzchar(i)&&file.exists(i))source(i)})';
+export const R_HOOK_BODY = 'local({if(interactive()){i<-Sys.getenv("RPLOT_PRO_INIT");if(nzchar(i)&&file.exists(i))source(i)}})';
 const JL_HOOK_BODY = 'let i = get(ENV, "VSC_JL_PLOT_INIT", ""); if !isempty(i) && isfile(i); include(i); end; end';
 
 // --- pure, unit-tested content helpers ---

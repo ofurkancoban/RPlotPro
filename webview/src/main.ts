@@ -537,7 +537,10 @@ function handleBinaryMessage(buffer, port) {
         const metaJson = decoder.decode(metaBytes);
         const metadata = JSON.parse(metaJson);
         const pid = metadata.id ? String(metadata.id) : null;
-        if (metadata.points && metadata.points.x) {
+        // Normalize snap points: older servers unbox a single point to scalars
+        // ({"x":5,"y":7}); coerce to arrays so downstream code never special-cases.
+        metadata.points = normalizeSnapPoints(metadata.points);
+        if (metadata.points) {
             log(`Hover-snap points received: ${metadata.points.x.length}`);
         }
         
@@ -1671,9 +1674,15 @@ function inspectOverlayCtx() {
     const img = document.getElementById('plotImage');
     const overlay = document.getElementById('inspectOverlay');
     if (!img || !overlay) return null;
-    const w = img.clientWidth, h = img.clientHeight;
+    // Use the rendered rect (not clientWidth) so overlay pixels match the same
+    // coordinate space the mouse handlers measure with getBoundingClientRect.
+    const rect = img.getBoundingClientRect();
+    const w = Math.round(rect.width), h = Math.round(rect.height);
+    if (w <= 0 || h <= 0) return null;
     if (overlay.width !== w || overlay.height !== h) { overlay.width = w; overlay.height = h; }
-    return { ctx: overlay.getContext('2d'), w, h, img };
+    const ctx = overlay.getContext('2d');
+    if (!ctx) return null;
+    return { ctx, w, h, img };
 }
 
 function clearInspectOverlay() {
@@ -1688,6 +1697,16 @@ function inspectLabel(ctx, text, x, y) {
     ctx.fillRect(x, y - 12, tw + pad * 2, 15);
     ctx.fillStyle = '#fff';
     ctx.fillText(text, x + pad, y);
+}
+
+// Coerce server-sent snap points to parallel number arrays, or undefined.
+// Handles the scalar unboxing of single-point plots and rejects malformed input.
+function normalizeSnapPoints(p) {
+    if (!p || p.x == null || p.y == null) return undefined;
+    const xs = Array.isArray(p.x) ? p.x : [p.x];
+    const ys = Array.isArray(p.y) ? p.y : [p.y];
+    if (xs.length === 0 || xs.length !== ys.length) return undefined;
+    return { x: xs, y: ys };
 }
 
 function pixelInImage(e, img) {
@@ -1705,7 +1724,7 @@ function drawHoverInspect(plot, px, py, w, h) {
     // free cursor coordinate.
     let d = RPlotCore.dataAtPixel(px, py, w, h, plot.coords);
     let snapPx = px, snapPy = py, snapped = false;
-    if (plot.points && plot.points.x && plot.points.y) {
+    if (plot.points && plot.points.x != null && plot.points.y != null) {
         const np = RPlotCore.nearestPoint(px, py, plot.points.x, plot.points.y, w, h, plot.coords, 16);
         if (np) { d = { x: np.x, y: np.y }; snapPx = np.px; snapPy = np.py; snapped = true; }
     }

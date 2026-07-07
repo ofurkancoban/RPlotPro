@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.R_HOOK_BODY = void 0;
 exports.contentHasHook = contentHasHook;
 exports.addHookToContent = addHookToContent;
 exports.removeHookFromContent = removeHookFromContent;
@@ -116,7 +117,7 @@ async function resolveBackends(backends) {
 // Both files use '#' comments, so the marker + add/remove logic is shared.
 const HOOK_START = '# [R Plot Pro]';
 const HOOK_END = '# [R Plot Pro END]';
-const R_HOOK_BODY = 'local({i<-Sys.getenv("RPLOT_PRO_INIT");if(nzchar(i)&&file.exists(i))source(i)})';
+exports.R_HOOK_BODY = 'local({if(interactive()){i<-Sys.getenv("RPLOT_PRO_INIT");if(nzchar(i)&&file.exists(i))source(i)}})';
 const JL_HOOK_BODY = 'let i = get(ENV, "VSC_JL_PLOT_INIT", ""); if !isempty(i) && isfile(i); include(i); end; end';
 // --- pure, unit-tested content helpers ---
 function contentHasHook(content) {
@@ -153,7 +154,7 @@ function detectLaunchLanguage(commandLine) {
     return null;
 }
 function rHook() {
-    return { file: path.join(os.homedir(), '.Rprofile'), body: R_HOOK_BODY,
+    return { file: path.join(os.homedir(), '.Rprofile'), body: exports.R_HOOK_BODY,
         label: 'R', pretty: '~/.Rprofile', declineKey: 'rprofile.declined' };
 }
 function juliaHook() {
@@ -218,6 +219,8 @@ function activate(context) {
         plotProvider.postMessage({ command: 'previous_plot' });
     }), vscode.commands.registerCommand('rPlotViewer.nextPlot', () => {
         plotProvider.postMessage({ command: 'next_plot' });
+    }), vscode.commands.registerCommand('rPlotViewer.toggleAnnotation', () => {
+        plotProvider.postMessage({ command: 'toggle_annotation' });
     }), vscode.commands.registerCommand('rPlotViewer.openGallery', () => {
         const panel = vscode.window.createWebviewPanel('rPlotGallery', 'R Plot Gallery', vscode.ViewColumn.One, {
             enableScripts: true,
@@ -543,6 +546,26 @@ function activate(context) {
     }
     // Send whenever active editor changes
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateActiveFile));
+    // Reverse link: when the cursor moves in an R/Julia source file, tell the webview
+    // to highlight the plots whose captured srcref covers that line. Debounced so a
+    // fast-moving cursor does not flood the webview.
+    let selectionTimer;
+    context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection((e) => {
+        const doc = e.textEditor.document;
+        if (doc.uri.scheme !== 'file')
+            return;
+        if (doc.languageId !== 'r' && doc.languageId !== 'julia')
+            return;
+        const file = doc.uri.fsPath;
+        const line = e.selections[0].active.line + 1; // 1-based, matches R srcref
+        if (selectionTimer)
+            clearTimeout(selectionTimer);
+        selectionTimer = setTimeout(() => {
+            plotProvider.postMessage({ command: 'highlight_source', file, line });
+        }, 120);
+    }));
+    context.subscriptions.push({ dispose: () => { if (selectionTimer)
+            clearTimeout(selectionTimer); } });
 }
 function deactivate() { }
 class PlotViewProvider {
@@ -694,14 +717,12 @@ class PlotViewProvider {
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'main.js'));
         const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'style.css'));
         const jspdfUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'vendor', 'jspdf.umd.min.js'));
-        const rplotCoreUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'vendor', 'rplot-core.js'));
         const htmlPath = vscode.Uri.joinPath(extensionUri, 'webview', 'index.html');
         let html = fs.readFileSync(htmlPath.fsPath, 'utf8');
         // Replace placeholders
         html = html.replace(/\${webview.cspSource}/g, webview.cspSource)
             .replace(/\${styleUri}/g, styleUri.toString())
             .replace(/\${jspdfUri}/g, jspdfUri.toString())
-            .replace(/\${rplotCoreUri}/g, rplotCoreUri.toString())
             .replace(/\${scriptUri}/g, scriptUri.toString());
         return html;
     }

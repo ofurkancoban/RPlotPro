@@ -780,7 +780,8 @@
       const metaJson = decoder.decode(metaBytes);
       const metadata = JSON.parse(metaJson);
       const pid = metadata.id ? String(metadata.id) : null;
-      if (metadata.points && metadata.points.x) {
+      metadata.points = normalizeSnapPoints(metadata.points);
+      if (metadata.points) {
         log(`Hover-snap points received: ${metadata.points.x.length}`);
       }
       const payload = new Uint8Array(buffer, 4 + metaLen);
@@ -1708,12 +1709,16 @@
     const img = document.getElementById("plotImage");
     const overlay = document.getElementById("inspectOverlay");
     if (!img || !overlay) return null;
-    const w = img.clientWidth, h = img.clientHeight;
+    const rect = img.getBoundingClientRect();
+    const w = Math.round(rect.width), h = Math.round(rect.height);
+    if (w <= 0 || h <= 0) return null;
     if (overlay.width !== w || overlay.height !== h) {
       overlay.width = w;
       overlay.height = h;
     }
-    return { ctx: overlay.getContext("2d"), w, h, img };
+    const ctx = overlay.getContext("2d");
+    if (!ctx) return null;
+    return { ctx, w, h, img };
   }
   function clearInspectOverlay() {
     const o = inspectOverlayCtx();
@@ -1727,6 +1732,13 @@
     ctx.fillStyle = "#fff";
     ctx.fillText(text, x + pad, y);
   }
+  function normalizeSnapPoints(p) {
+    if (!p || p.x == null || p.y == null) return void 0;
+    const xs = Array.isArray(p.x) ? p.x : [p.x];
+    const ys = Array.isArray(p.y) ? p.y : [p.y];
+    if (xs.length === 0 || xs.length !== ys.length) return void 0;
+    return { x: xs, y: ys };
+  }
   function pixelInImage(e, img) {
     const rect = img.getBoundingClientRect();
     return { px: e.clientX - rect.left, py: e.clientY - rect.top, w: rect.width, h: rect.height };
@@ -1738,7 +1750,7 @@
     const tip = ensureInspectTip();
     let d = dataAtPixel(px, py, w, h, plot.coords);
     let snapPx = px, snapPy = py, snapped = false;
-    if (plot.points && plot.points.x && plot.points.y) {
+    if (plot.points && plot.points.x != null && plot.points.y != null) {
       const np = nearestPoint(px, py, plot.points.x, plot.points.y, w, h, plot.coords, 16);
       if (np) {
         d = { x: np.x, y: np.y };
