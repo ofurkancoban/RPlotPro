@@ -1966,15 +1966,32 @@ function startPresentation() {
     }
     presIdx = Math.min(Math.max(currentIndex, 0), plots.length - 1);
     presOn = true;
-    buildPresentationOverlay().style.display = 'flex';
+    const el = buildPresentationOverlay();
+    el.style.display = 'flex';
     renderPresentation();
+    // Try real fullscreen first (covers the whole screen); if the webview
+    // sandbox rejects it, fall back to maximizing the editor panel.
+    const req = el.requestFullscreen ? el.requestFullscreen() : Promise.reject();
+    Promise.resolve(req).catch(() => {
+        vscode.postMessage({ command: 'presentation_maximize', active: true });
+    });
 }
 
 function exitPresentation() {
     presOn = false;
     const el = document.getElementById('presOverlay');
     if (el) el.style.display = 'none';
+    if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+    }
+    vscode.postMessage({ command: 'presentation_maximize', active: false });
 }
+
+// Leaving browser fullscreen (Esc is handled by the browser there, not our
+// keydown listener) must also end the presentation.
+document.addEventListener('fullscreenchange', () => {
+    if (presOn && !document.fullscreenElement) exitPresentation();
+});
 
 function presNav(dir) {
     if (!plots.length) return;
