@@ -1837,8 +1837,13 @@ function commitCrop(plot, endPx, endPy, w, h) {
     if (Math.abs(p1.x - p0.x) < 1e-12 || Math.abs(p1.y - p0.y) < 1e-12) return;
     const xlim = [Math.min(p0.x, p1.x), Math.max(p0.x, p1.x)];
     const ylim = [Math.min(p0.y, p1.y), Math.max(p0.y, p1.y)];
-    const cmd = `xlim <- c(${zoomNumber(xlim[0])}, ${zoomNumber(xlim[1])}); `
-        + `ylim <- c(${zoomNumber(ylim[0])}, ${zoomNumber(ylim[1])})  # R Plot Pro zoom region`;
+    // ggplot panels get a ready-to-add coord_cartesian layer; base plots get
+    // xlim/ylim variables for the next plot call.
+    const cmd = plot.coords && plot.coords.gg
+        ? `coord_cartesian(xlim = c(${zoomNumber(xlim[0])}, ${zoomNumber(xlim[1])}), `
+            + `ylim = c(${zoomNumber(ylim[0])}, ${zoomNumber(ylim[1])}))  # R Plot Pro zoom region: add to your ggplot`
+        : `xlim <- c(${zoomNumber(xlim[0])}, ${zoomNumber(xlim[1])}); `
+            + `ylim <- c(${zoomNumber(ylim[0])}, ${zoomNumber(ylim[1])})  # R Plot Pro zoom region`;
     // Type the limits into the R console (without running) so the user can add them to
     // their plot call.
     vscode.postMessage({ command: 'reveal_code', code: cmd });
@@ -1896,6 +1901,85 @@ function setInspectMode(mode) {
     cropStart = null;
     clearInspectOverlay();
     ensureInspectTip().style.display = 'none';
+}
+
+// --- Presentation mode: full-screen walk through ALL plots with note + code ---
+let presOn = false;
+let presIdx = 0;
+let presShowCode = false;
+
+function buildPresentationOverlay() {
+    let el = document.getElementById('presOverlay');
+    if (el) return el;
+    el = document.createElement('div');
+    el.id = 'presOverlay';
+    el.className = 'pres-overlay';
+    el.style.display = 'none';
+
+    const img = document.createElement('img');
+    img.id = 'presImg';
+    const caption = document.createElement('div');
+    caption.id = 'presCaption';
+    caption.className = 'pres-caption';
+    const counter = document.createElement('div');
+    counter.id = 'presCounter';
+    counter.className = 'pres-counter';
+    const hint = document.createElement('div');
+    hint.className = 'pres-hint';
+    hint.textContent = '← / → navigate    C code    Esc exit';
+    el.append(img, caption, counter, hint);
+
+    // Click on the backdrop (not the image or caption) exits.
+    el.addEventListener('click', (e) => { if (e.target === el) exitPresentation(); });
+    document.body.appendChild(el);
+    return el;
+}
+
+function renderPresentation() {
+    const plot = plots[presIdx];
+    if (!plot) return;
+    const img = document.getElementById('presImg');
+    img.src = plotUrls.get(plot.id) || plot.data || '';
+    const caption = document.getElementById('presCaption');
+    caption.textContent = '';
+    if (plot.note) {
+        const note = document.createElement('div');
+        note.className = 'pres-note';
+        note.textContent = plot.note;
+        caption.appendChild(note);
+    }
+    if (presShowCode && plot.code && String(plot.code).trim()) {
+        const code = document.createElement('pre');
+        code.className = 'pres-code';
+        code.textContent = plot.code;
+        caption.appendChild(code);
+    }
+    caption.style.display = caption.childNodes.length ? 'block' : 'none';
+    document.getElementById('presCounter').textContent = `${presIdx + 1} / ${plots.length}`;
+}
+
+function startPresentation() {
+    hideSettingsMenu();
+    if (!plots.length) {
+        vscode.postMessage({ command: 'info', text: 'No plots to present yet' });
+        return;
+    }
+    presIdx = Math.min(Math.max(currentIndex, 0), plots.length - 1);
+    presOn = true;
+    buildPresentationOverlay().style.display = 'flex';
+    renderPresentation();
+}
+
+function exitPresentation() {
+    presOn = false;
+    const el = document.getElementById('presOverlay');
+    if (el) el.style.display = 'none';
+}
+
+function presNav(dir) {
+    if (!plots.length) return;
+    presIdx = (presIdx + dir + plots.length) % plots.length;
+    renderPresentation();
 }
 
 // Combine several plots (favourites if any, else the whole gallery, capped) into one
@@ -2229,7 +2313,8 @@ function buildSettingsMenu() {
         '<div class="code-menu-item" data-act="mode-measure"></div>' +
         '<div class="code-menu-item" data-act="mode-crop"></div>' +
         '<div class="code-menu-sep"></div>' +
-        '<div class="code-menu-item" data-act="montage">Export gallery as grid (PNG)</div>';
+        '<div class="code-menu-item" data-act="montage">Export gallery as grid (PNG)</div>' +
+        '<div class="code-menu-item" data-act="present">Start presentation (P)</div>';
     settingsMenuEl.addEventListener('click', (e) => {
         const item = e.target.closest('.code-menu-item');
         if (!item || item.classList.contains('disabled')) { e.stopPropagation(); return; }
@@ -2243,6 +2328,7 @@ function buildSettingsMenu() {
         else if (act === 'mode-measure') setInspectMode('measure');
         else if (act === 'mode-crop') setInspectMode('crop');
         else if (act === 'montage') { hideSettingsMenu(); exportGridMontage(); return; }
+        else if (act === 'present') { startPresentation(); return; }
         updateSettingsMenu();
     });
     document.body.appendChild(settingsMenuEl);
@@ -3440,6 +3526,15 @@ initHoverInspect();
 
 // Keyboard Shortcuts
 window.addEventListener('keydown', (e) => {
+    if (presOn) {
+        switch (e.key) {
+            case 'Escape':     e.preventDefault(); exitPresentation(); break;
+            case 'ArrowRight': case ' ': e.preventDefault(); presNav(1); break;
+            case 'ArrowLeft':  e.preventDefault(); presNav(-1); break;
+            case 'c': case 'C': e.preventDefault(); presShowCode = !presShowCode; renderPresentation(); break;
+        }
+        return;
+    }
     if (isAnnotating) {
         if (e.ctrlKey || e.metaKey) {
             if (e.key === 'z') {
@@ -3467,6 +3562,7 @@ window.addEventListener('keydown', (e) => {
         case 'a': case 'A': e.preventDefault(); toggleAnnotationMode(); break;
         case 'e': case 'E': e.preventDefault(); exportPlot(); break;
         case 'd': case 'D': e.preventDefault(); toggleDarkMode(); break;
+        case 'p': case 'P': e.preventDefault(); startPresentation(); break;
     }
 });
 
@@ -3482,6 +3578,8 @@ setTimeout(() => {
 // Inline HTML on* handlers call them by name, so expose them on window.
 Object.assign(window as any, {
     clearAllPlots,
+    startPresentation,
+    exitPresentation,
     clearAnnotations,
     closeNoteModal,
     closeTextModal,
