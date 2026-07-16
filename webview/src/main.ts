@@ -158,15 +158,9 @@ let isSplitMode = false;
 let leftIndex = typeof state.leftIndex === 'number' ? state.leftIndex : -1;
 let rightIndex = typeof state.rightIndex === 'number' ? state.rightIndex : -1;
 let isDraggingDivider = false;
-// Dark (inverted) plot mode. By default it follows the VS Code color theme; a manual
-// toggle pins it for the session. VS Code tags the webview body with vscode-dark /
-// vscode-light / vscode-high-contrast.
-function detectVsCodeDark() {
-    const c = document.body.classList;
-    return c.contains('vscode-dark') || c.contains('vscode-high-contrast');
-}
+// Dark (inverted) plot mode. Manual toggle pins it for the session.
 let darkModeUserSet = typeof state.darkMode === 'boolean';
-let isDarkMode = darkModeUserSet ? state.darkMode : detectVsCodeDark();
+let isDarkMode = darkModeUserSet ? state.darkMode : false;
 
 // User setting (persisted): show data coordinates when hovering a static plot.
 let hoverInspectEnabled = state.hoverInspect !== false;
@@ -3672,16 +3666,7 @@ if (isDarkMode) {
 }
 updateDarkModeUI();
 
-// Follow VS Code theme changes until the user manually pins dark mode.
-new MutationObserver(() => {
-    if (darkModeUserSet) return;
-    const shouldDark = detectVsCodeDark();
-    if (shouldDark !== isDarkMode) {
-        isDarkMode = shouldDark;
-        document.body.classList.toggle('dark-mode', isDarkMode);
-        updateDarkModeUI();
-    }
-}).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+// Theme changes are now handled entirely by CSS variables synced with the IDE.
 refreshLayout();
 setDrawColor(currentColor);
 initCustomColorPicker();

@@ -1,5 +1,10 @@
 # R Plot Pro - Release Notes
 
+## v0.52.0 - Native theme sync
+
+### Improved
+- **Theme sync update** - Removed the forced dark mode at startup that was based on VS Code theme classes (`vscode-dark`). The extension now relies entirely on IDE-synced CSS variables for a seamless and native look without the jarring dark background on initial launch.
+
 ## v0.51.0 - ggplot2 inspect, presentation mode, laser pointer & quarto fix
 
 ### New
