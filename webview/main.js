@@ -460,12 +460,8 @@
   var leftIndex = typeof state.leftIndex === "number" ? state.leftIndex : -1;
   var rightIndex = typeof state.rightIndex === "number" ? state.rightIndex : -1;
   var isDraggingDivider = false;
-  function detectVsCodeDark() {
-    const c = document.body.classList;
-    return c.contains("vscode-dark") || c.contains("vscode-high-contrast");
-  }
   var darkModeUserSet = typeof state.darkMode === "boolean";
-  var isDarkMode = darkModeUserSet ? state.darkMode : detectVsCodeDark();
+  var isDarkMode = darkModeUserSet ? state.darkMode : false;
   var hoverInspectEnabled = state.hoverInspect !== false;
   var lastCanvasData = /* @__PURE__ */ new Map();
   var plotZoom = state.plotZoom ? new Map(Object.entries(state.plotZoom)) : /* @__PURE__ */ new Map();
@@ -3439,15 +3435,6 @@ ${code}${noteLines}
     document.body.classList.add("dark-mode");
   }
   updateDarkModeUI();
-  new MutationObserver(() => {
-    if (darkModeUserSet) return;
-    const shouldDark = detectVsCodeDark();
-    if (shouldDark !== isDarkMode) {
-      isDarkMode = shouldDark;
-      document.body.classList.toggle("dark-mode", isDarkMode);
-      updateDarkModeUI();
-    }
-  }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
   refreshLayout();
   setDrawColor(currentColor);
   initCustomColorPicker();
