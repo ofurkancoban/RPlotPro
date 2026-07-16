@@ -16,7 +16,7 @@ if (interactive()) {
 cat("\r\x1b[A\x1b[K")
 
 local({
-    this_version <- "0.51.0"
+    this_version <- "0.52.0"
 
     # If server is already running at the SAME version, skip re-initialization.
     # This prevents the sentinel (which fires 1-4s after terminal opens) from
