@@ -641,14 +641,6 @@ function ensure_method_shadowing()
         try
             # We reach into VSCodeServer and override their plot-handling entry points.
             Base.eval(Main.VSCodeServer, quote
-                # Override their specialized display logic
-                function display(x)
-                    if isdefined(Main, :RPlotPro) && Base.invokelatest(Main.RPlotPro.is_plot_object, x)
-                        Base.invokelatest(Main.RPlotPro.capture_and_send, x)
-                        return nothing
-                    end
-                    Base.Multimedia.display(x)
-                end
 
                 # Override their inline display hook
                 function inline_display(x)
