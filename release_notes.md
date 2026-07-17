@@ -1,5 +1,10 @@
 # R Plot Pro - Release Notes
 
+## v0.53.0 - Fix StackOverflowError in Julia REPL
+
+### Fixed
+- **Julia REPL integration** - Removed an incorrect global `display(x)` override inside the VSCodeServer hijack block that caused an infinite recursion (`StackOverflowError`) when evaluating non-plot expressions in the official VS Code Julia REPL.
+
 ## v0.52.0 - Native theme sync
 
 ### Improved
