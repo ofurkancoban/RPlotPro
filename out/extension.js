@@ -434,15 +434,24 @@ function activate(context) {
                 // Offer the Julia startup hook the first time Julia is actually used
                 // (so R-only users never see a Julia prompt).
                 setupHookIntegration(context, juliaHook());
-                setTimeout(() => {
-                    const bootDir = (os.platform() !== 'win32' && fs.existsSync('/tmp')) ? '/tmp' : os.tmpdir();
-                    const jlBootPath = path.join(bootDir, 'j.jl');
-                    const jlBootContent = `ENV["VSCODE_R_PLOT_CONFIG"]="${sanitizePath(uniqueConfigDir)}"; include("${sanitizePath(normalizedJlPath)}")`;
-                    fs.writeFileSync(jlBootPath, jlBootContent);
-                    // v0.38.0: External wipe removed (now handled internally by init.jl)
-                    const jlCmd = `include("${sanitizePath(jlBootPath)}")`;
-                    terminal.sendText(jlCmd, true);
-                }, 2500);
+                // Once the startup.jl hook is installed, it sources init.jl itself
+                // before the REPL prompt is ready - no injection needed. Sending the
+                // include(...) command here as well is not just redundant: it races
+                // the REPL's own startup.jl load, and on a slow start the terminal
+                // swallows/misfires the first keystrokes (e.g. "include" arriving as
+                // "nclude" with a stray "i" left over - see #10). Only fall back to
+                // manual injection when the hook hasn't been installed yet.
+                if (!hookInstalled(juliaHook())) {
+                    setTimeout(() => {
+                        const bootDir = (os.platform() !== 'win32' && fs.existsSync('/tmp')) ? '/tmp' : os.tmpdir();
+                        const jlBootPath = path.join(bootDir, 'j.jl');
+                        const jlBootContent = `ENV["VSCODE_R_PLOT_CONFIG"]="${sanitizePath(uniqueConfigDir)}"; include("${sanitizePath(normalizedJlPath)}")`;
+                        fs.writeFileSync(jlBootPath, jlBootContent);
+                        // v0.38.0: External wipe removed (now handled internally by init.jl)
+                        const jlCmd = `include("${sanitizePath(jlBootPath)}")`;
+                        terminal.sendText(jlCmd, true);
+                    }, 2500);
+                }
             }
         };
         // Event-driven Sentinel: instead of polling terminals forever, we scan only
