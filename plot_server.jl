@@ -111,9 +111,15 @@ Base.displayable(d::RPlotProDisplay, ::MIME"image/svg+xml") = true
 function is_plot_object(x)
     # Heuristically check if it looks like a plot object
     t = string(typeof(x))
-    
-    # 1. Name based check (covers most common ones)
-    if occursin("Plot", t) || occursin("Figure", t) || occursin("Scene", t) || occursin("Chart", t) || occursin("Makie", t) || occursin("Layout", t)
+
+    # 1. Name based check (covers most common ones).
+    # Match only against the unqualified type name (e.g. "Plot" from
+    # "Plots.Plot{...}"), not the full string - otherwise a module-qualified
+    # name like "Plots.GRBackend" false-positives on the "Plot" substring of
+    # its own module prefix "Plots" and gets sent through capture_and_send
+    # even though it isn't a plot object (see #10).
+    base_name = split(split(t, '{')[1], '.')[end]
+    if occursin("Plot", base_name) || occursin("Figure", base_name) || occursin("Scene", base_name) || occursin("Chart", base_name) || occursin("Makie", base_name) || occursin("Layout", base_name)
         return true
     end
     
