@@ -1,5 +1,11 @@
 # R Plot Pro - Release Notes
 
+## v0.54.0 - Fix Julia REPL startup injection race and gr() capture warning
+
+### Fixed
+- **Julia REPL startup injection race** (#10) - once the `startup.jl` hook was installed, the extension still also sent a redundant `include(...)` command straight into the terminal a few seconds after launch. That command raced the REPL's own startup.jl load and, on a slower start, arrived while the REPL wasn't ready yet, dropping/misordering the first keystrokes (`nclude(...)` with a stray `i` left over, followed by `UndefVarError: i not defined`). The manual injection is now skipped whenever the startup hook is already installed, since startup.jl already sources init.jl before the prompt appears.
+- **Spurious "Error capturing plot" warning on backend calls like `gr()`** (#10) - `is_plot_object` matched the "Plot" substring anywhere in the fully-qualified type name, so `Plots.GRBackend` (which contains "Plot" via its own module prefix "Plots") was misclassified as a plot object and sent through `capture_and_send`, which then failed with a `MethodError` trying to `show` it as an image. The check now matches only the unqualified type name.
+
 ## v0.53.0 - Fix StackOverflowError in Julia REPL
 
 ### Fixed
