@@ -1,5 +1,11 @@
 # R Plot Pro - Release Notes
 
+## v0.55.1 - Packaging fix
+
+### Fixed
+- **A scratch `test.jl` was shipped inside the v0.55.0 package** - a test script left in the repository root was not covered by `.vscodeignore`, so `vsce` bundled it into the extension. It was inert, but it had no business being installed on anyone's machine. Root-level test scripts are now ignored when packaging.
+- **Marketplace icon** - the gallery now enforces a 1024x1024 maximum, which the icon had always exceeded. Scaled to 887x1024, preserving the aspect ratio and transparency, so the artwork is unchanged.
+
 ## v0.55.0 - Fix Julia display of values holding `missing`, and a reliable Julia attach
 
 ### Fixed
