@@ -1,5 +1,12 @@
 # R Plot Pro - Release Notes
 
+## v0.55.0 - Fix Julia display of values holding `missing`, and a reliable Julia attach
+
+### Fixed
+- **`missing` values broke display in the Julia REPL** (#11) - showing any value whose `==` does not return a `Bool` failed with `TypeError: non-boolean (Missing) used in boolean context`, so `DataFrame(Fruit = ["apple", missing, "pear"], portions = Int16[1, 4, 7])` (or even `Dict("fruit" => missing)`) could not be printed at all. The shadowed `display(x)` walks the display stack and has to recognise a "this display cannot show x" `MethodError` to move on to the next one; it compared the error's arguments with `!=`, which called `==` on the user's own data. The arguments are now matched by identity (`===`), so user data is never compared.
+- **Julia attach no longer depends on a single timed guess** (#11) - without the `startup.jl` hook the extension typed `include(...)` into the REPL 2.5s after launch. On a slow or remote start the REPL had not reached its prompt, so the keystrokes were dropped and reordered (`ncluusing CairoMakie`, `UndefVarError: nclude`) and the session attached to nothing, leaving plots uncaptured. Each attempt now opens with a bare newline to land on a clean prompt, and attempts repeat until Julia registers its port file.
+- **Loading `init.jl` twice no longer starts a second server** (#11) - the startup hook and the terminal fallback could both fire for one session, redefining the module, stacking a second display and writing a second port file, which captured and sent every plot twice. `init.jl` now leaves an already-serving session alone.
+
 ## v0.54.0 - Fix Julia REPL startup injection race and gr() capture warning
 
 ### Fixed

@@ -631,9 +631,14 @@ function ensure_method_shadowing()
                         display(d, x)
                         return nothing
                     catch e
-                        if !(e isa MethodError) || e.f != display || e.args != (d, x)
-                            rethrow()
-                        end
+                        # Only swallow "this display cannot show x" errors, and
+                        # identify them with === instead of ==: == on user data
+                        # need not return a Bool (a DataFrame holding `missing`
+                        # compares to `missing`), which would turn an ordinary
+                        # show into a TypeError (see #11).
+                        cannot_show = e isa MethodError && e.f === display &&
+                                      length(e.args) == 2 && e.args[1] === d && e.args[2] === x
+                        cannot_show || rethrow()
                     end
                 end
                 throw(MethodError(display, (x,)))

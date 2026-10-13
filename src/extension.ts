@@ -445,6 +445,39 @@ export function activate(context: vscode.ExtensionContext) {
 
     if (autoAttach) {
         const injectedPids = new Set<number>();
+
+        // Typing into a Julia REPL that has not reached its prompt yet loses and
+        // reorders keystrokes, so `include` can arrive as `nclude` with a stray
+        // `i` left behind (see #10, #11). Nothing in the API reports REPL
+        // readiness - a remote or precompiling session can take far longer than
+        // any fixed delay - so instead of one timed shot each attempt opens with
+        // a bare newline (submitting whatever fragment is on the line, leaving a
+        // clean prompt) and attempts repeat until Julia registers its port file.
+        // Re-sending is safe because init.jl ignores a load it has already done.
+        const JULIA_BOOT_ATTEMPTS = 3;
+        const JULIA_BOOT_INTERVAL_MS = 5000;
+        const juliaBackendCount = () => plotProvider.getBackends().filter(b => b.language === 'julia').length;
+        const injectJuliaBoot = (terminal: vscode.Terminal, cmd: string) => {
+            const before = juliaBackendCount();
+            let attempt = 0;
+            const tick = () => {
+                if (terminal.exitStatus !== undefined) return;
+                if (juliaBackendCount() > before) {
+                    logLine(`[Sentinel] Julia attached after ${attempt} injection attempt(s).`);
+                    return;
+                }
+                if (attempt >= JULIA_BOOT_ATTEMPTS) {
+                    logLine('[Sentinel] Julia did not attach. Add the ~/.julia/config/startup.jl hook for a timing-free attach.');
+                    return;
+                }
+                attempt++;
+                terminal.sendText('', true);
+                terminal.sendText(cmd, true);
+                setTimeout(tick, JULIA_BOOT_INTERVAL_MS);
+            };
+            setTimeout(tick, 2500);
+        };
+
         // forceLang lets a reliable signal (shell-integration command detection)
         // drive injection regardless of the terminal name.
         const tryInject = async (terminal: vscode.Terminal, force = false, forceLang?: 'r' | 'julia') => {
@@ -495,23 +528,17 @@ export function activate(context: vscode.ExtensionContext) {
                 setupHookIntegration(context, juliaHook());
 
                 // Once the startup.jl hook is installed, it sources init.jl itself
-                // before the REPL prompt is ready - no injection needed. Sending the
-                // include(...) command here as well is not just redundant: it races
-                // the REPL's own startup.jl load, and on a slow start the terminal
-                // swallows/misfires the first keystrokes (e.g. "include" arriving as
-                // "nclude" with a stray "i" left over - see #10). Only fall back to
-                // manual injection when the hook hasn't been installed yet.
+                // before the REPL prompt is ready, so typing into the terminal is
+                // pure downside: it races the REPL's own startup.jl load (see #10).
+                // Only fall back to injection when the hook hasn't been installed.
                 if (!hookInstalled(juliaHook())) {
-                    setTimeout(() => {
-                        const bootDir = (os.platform() !== 'win32' && fs.existsSync('/tmp')) ? '/tmp' : os.tmpdir();
-                        const jlBootPath = path.join(bootDir, 'j.jl');
-                        const jlBootContent = `ENV["VSCODE_R_PLOT_CONFIG"]="${sanitizePath(uniqueConfigDir)}"; include("${sanitizePath(normalizedJlPath)}")`;
-                        fs.writeFileSync(jlBootPath, jlBootContent);
+                    const bootDir = (os.platform() !== 'win32' && fs.existsSync('/tmp')) ? '/tmp' : os.tmpdir();
+                    const jlBootPath = path.join(bootDir, 'j.jl');
+                    const jlBootContent = `ENV["VSCODE_R_PLOT_CONFIG"]="${sanitizePath(uniqueConfigDir)}"; include("${sanitizePath(normalizedJlPath)}")`;
+                    fs.writeFileSync(jlBootPath, jlBootContent);
 
-                        // v0.38.0: External wipe removed (now handled internally by init.jl)
-                        const jlCmd = `include("${sanitizePath(jlBootPath)}")`;
-                        terminal.sendText(jlCmd, true);
-                    }, 2500);
+                    // v0.38.0: External wipe removed (now handled internally by init.jl)
+                    injectJuliaBoot(terminal, `include("${sanitizePath(jlBootPath)}")`);
                 }
             }
         };
