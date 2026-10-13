@@ -21,3 +21,7 @@ image/**
 r-plot-pro-*.vsix
 test.*
 test_*
+.gitignore
+# Generated at runtime: a stale port file here is the very name the R/Julia
+# side falls back to when no config dir is set, so it must never be shipped.
+.r_plot_config.json
