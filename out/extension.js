@@ -393,7 +393,7 @@ function activate(context) {
         const injectedPids = new Set();
         // Typing into a Julia REPL that has not reached its prompt yet loses and
         // reorders keystrokes, so `include` can arrive as `nclude` with a stray
-        // `i` left behind (see #10, #11). Nothing in the API reports REPL
+        // `i` left behind (see #11). Nothing in the API reports REPL
         // readiness - a remote or precompiling session can take far longer than
         // any fixed delay - so instead of one timed shot each attempt opens with
         // a bare newline (submitting whatever fragment is on the line, leaving a
@@ -468,7 +468,7 @@ function activate(context) {
                 setupHookIntegration(context, juliaHook());
                 // Once the startup.jl hook is installed, it sources init.jl itself
                 // before the REPL prompt is ready, so typing into the terminal is
-                // pure downside: it races the REPL's own startup.jl load (see #10).
+                // pure downside: it races the REPL's own startup.jl load.
                 // Only fall back to injection when the hook hasn't been installed.
                 if (!hookInstalled(juliaHook())) {
                     const bootDir = (os.platform() !== 'win32' && fs.existsSync('/tmp')) ? '/tmp' : os.tmpdir();

@@ -117,7 +117,8 @@ function is_plot_object(x)
     # "Plots.Plot{...}"), not the full string - otherwise a module-qualified
     # name like "Plots.GRBackend" false-positives on the "Plot" substring of
     # its own module prefix "Plots" and gets sent through capture_and_send
-    # even though it isn't a plot object (see #10).
+    # even though it isn't a plot object, which surfaced as a spurious
+    # "Error capturing plot" warning on a bare gr() call.
     base_name = split(split(t, '{')[1], '.')[end]
     if occursin("Plot", base_name) || occursin("Figure", base_name) || occursin("Scene", base_name) || occursin("Chart", base_name) || occursin("Makie", base_name) || occursin("Layout", base_name)
         return true
