@@ -19,3 +19,5 @@ publish.sh
 release_notes.md
 image/**
 r-plot-pro-*.vsix
+test.*
+test_*
